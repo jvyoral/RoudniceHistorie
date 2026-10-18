@@ -229,3 +229,23 @@ kbd {
   #track-wrap { width: 100%; padding-top: 8px; }
   #info-btn { top: auto; bottom: 150px; left: auto; right: 16px; transform: none; }
 }
+
+.label.village {
+  background: rgba(40, 52, 36, 0.72);
+  font-size: 11px;
+  font-style: italic;
+}
+
+#attribution {
+  position: fixed;
+  right: 8px; bottom: 100px;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--muted);
+  background: rgba(18, 22, 28, 0.6);
+  border-radius: 4px;
+  text-decoration: none;
+}
+@media (max-width: 700px) {
+  #attribution { bottom: 144px; }
+}

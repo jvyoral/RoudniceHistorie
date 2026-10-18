@@ -29,9 +29,14 @@ Stránku lze nasadit i na GitHub Pages bez dalšího sestavování.
 - `index.html` – rozložení stránky
 - `css/style.css` – vzhled panelů a časové osy
 - `js/data.js` – historické události, období a vývoj počtu obyvatel (snadno rozšiřitelné)
-- `js/main.js` – 3D scéna (terén, generovaná zástavba podle období, památky) a ovládání
+- `js/geo.js` – tok Labe, železnice, silnice a půdorysy budov z OpenStreetMap (generovaný soubor)
+- `js/main.js` – 3D scéna (terén, zástavba podle období, památky, okolní obce) a ovládání
+- `tools/build_geo.py` – skript, který z OSM API stáhne data a vygeneruje `js/geo.js`
+  (`python3 tools/build_geo.py`)
 
 ## Poznámka k přesnosti
 
-Model je schematický: polohy staveb odpovídají skutečnosti přibližně a běžná zástavba je generovaná procedurálně
-podle období. Počty obyvatel před rokem 1869 jsou odhady. Zdroje jsou uvedeny přímo na stránce (tlačítko „i“).
+Tok Labe, železnice, silnice a půdorysy dnešních budov (Roudnice, Vědomice, Dobříň, Podlusky, Kyškovice…)
+pocházejí z OpenStreetMap (© přispěvatelé OpenStreetMap, ODbL). Doba vzniku jednotlivých domů je odhadnutá podle
+polohy (Staré Město, předměstí, vilové čtvrti, sídliště), podoba zaniklých staveb je schematická a vzdálenější obce
+jsou znázorněny jen orientačně. Počty obyvatel před rokem 1869 jsou odhady. Zdroje jsou uvedeny přímo na stránce (tlačítko „i“).

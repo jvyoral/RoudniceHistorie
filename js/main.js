@@ -4,6 +4,7 @@ import {
   YEAR_MIN, YEAR_MAX, EVENTS, CATEGORIES, POPULATION, SOURCES,
   populationAt, eraAt,
 } from './data.js';
+import { RIVER, BUILDINGS, STREETS, RAILS } from './geo.js';
 
 // ---------------------------------------------------------------------------
 // Pomocné funkce
@@ -44,7 +45,6 @@ function mulberry32(seed) {
 }
 const rand = mulberry32(1167);
 const rr = (a, b) => a + (b - a) * rand();
-const pick = (arr) => arr[Math.floor(rand() * arr.length)];
 
 // Po částech lineární funkce [[rok, hodnota], ...]
 function piecewise(table, x) {
@@ -71,6 +71,14 @@ function polyDist(px, pz, pts) {
   }
   return m;
 }
+function pointInPoly(x, z, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, zi] = poly[i], [xj, zj] = poly[j];
+    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
 function densify(pts, step) {
   const out = [];
   for (let i = 1; i < pts.length; i++) {
@@ -81,43 +89,91 @@ function densify(pts, step) {
   out.push(pts[pts.length - 1]);
   return out;
 }
+const pairs = (flat) => {
+  const out = [];
+  for (let i = 0; i < flat.length; i += 2) out.push([flat[i], flat[i + 1]]);
+  return out;
+};
 const col = (s) => new THREE.Color(s);
 
 // ---------------------------------------------------------------------------
-// Krajina: Labe, terasa se zámkem, niva na severním břehu a hora Říp
+// Geografie (souřadnice z OpenStreetMap, 1 jednotka = 10 m, x = východ, z = jih)
 // ---------------------------------------------------------------------------
 
-const RIVER_W = 6.5;            // poloviční šířka Labe (~130 m)
-const RIP = [390, 390];         // Říp ~5,5 km jihovýchodně od města
-const HILL = [-20, 230];        // kopec s Kratochvílovou rozhlednou
-const TOWN = [20, 60];          // přibližný střed dnešní zástavby
-const TERRAIN_SIZE = 1400;
-const TERRAIN_SEG = 300;
+const RIVER_W = 6.5;              // poloviční šířka Labe (~130 m)
+const RIP = [197, 429];           // vrchol Řípu
+const CASTLE = [-1.5, -3.5];      // zámek
+const SQUARE = [-14, 8];          // Karlovo náměstí
+const TOWN = [-15, 30];           // přibližný střed dnešní zástavby
+const BRIDGE = [[-6, -19], [3, -50]]; // osa mostu přes Labe
+const TERRAIN_SIZE = 1600;
+const TERRAIN_SEG = 320;
 
-function riverZ(x) {
-  return -25 - 0.00035 * x * x + 6 * Math.sin(x / 55);
+// Hradby Starého Města (schematicky)
+const WALLS = [[-8, -8], [-18, -4], [-30, -8], [-46, -10], [-53, 5], [-46, 25], [-20, 30], [0, 25], [6, 10], [4, 1]];
+const WALLS_CLOSED = [...WALLS, WALLS[0]];
+// Obce v okolí: [název, x, z, poloměr jádra, orientační vznik]
+const VILLAGES = [
+  ['Vědomice', -56, -95, 16, 1400],
+  ['Dobříň', 226, -136, 14, 1230],
+  ['Podlusky', -250, 48, 12, 1200],
+  ['Kyškovice', 172, -251, 12, 1200],
+  ['Vesce', 191, 217, 10, 1250],
+  ['Zavadilka', 0, -180, 6, 1750],
+];
+// Vzdálenější obce – jen schematická zástavba
+const FAR_VILLAGES = [
+  ['Černěves', -133, -322], ['Hrobce', -220, -411], ['Chodouny', -80, -529], ['Libotenice', -231, -571],
+  ['Krabčice', 280, 220], ['Bechlín', 560, 100], ['Kleneč', -96, 362], ['Přestavlky', -482, 241],
+  ['Dušníky', -508, 8], ['Mnetěš', 141, 661], ['Ctiněves', 321, 562], ['Kostomlaty pod Řípem', 506, 470],
+  ['Záluží', 403, -355], ['Račice', 633, -398], ['Straškov', -83, 674], ['Račiněves', -306, 577],
+];
+
+// --- Labe: znaménková vzdálenost (kladná = pravý břeh / niva uvnitř oblouku) ---
+const RIVER_PTS = pairs(RIVER);
+function riverSignedExact(x, z) {
+  let best = Infinity, sign = 1;
+  for (let i = 1; i < RIVER_PTS.length; i++) {
+    const [ax, az] = RIVER_PTS[i - 1], [bx, bz] = RIVER_PTS[i];
+    const d = segDist(x, z, ax, az, bx, bz);
+    if (d < best) {
+      best = d;
+      sign = (bx - ax) * (z - az) - (bz - az) * (x - ax) >= 0 ? 1 : -1;
+    }
+  }
+  return best * sign;
+}
+const SD_CELL = 4, SD_N = Math.ceil(TERRAIN_SIZE / SD_CELL) + 3, SD_O = -TERRAIN_SIZE / 2 - SD_CELL;
+const sdGrid = new Float32Array(SD_N * SD_N);
+for (let j = 0; j < SD_N; j++) {
+  for (let i = 0; i < SD_N; i++) sdGrid[j * SD_N + i] = riverSignedExact(SD_O + i * SD_CELL, SD_O + j * SD_CELL);
+}
+function riverSD(x, z) {
+  const fx = clamp((x - SD_O) / SD_CELL, 0, SD_N - 1.001), fz = clamp((z - SD_O) / SD_CELL, 0, SD_N - 1.001);
+  const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
+  const k = j * SD_N + i;
+  return lerp(lerp(sdGrid[k], sdGrid[k + 1], u), lerp(sdGrid[k + SD_N], sdGrid[k + SD_N + 1], u), v);
 }
 
 function height(x, z) {
-  const d = z - riverZ(x);
+  const sd = riverSD(x, z);
   const n = fbm(x * 0.012, z * 0.012);
   let h;
-  if (d < -RIVER_W) {
-    const dd = -d - RIVER_W;
-    h = 0.4 + Math.min(dd * 0.006, 3) + (n - 0.5) * 6 * smoothstep(30, 250, dd) + smoothstep(150, 500, dd) * 8 * n;
-  } else if (d <= RIVER_W) {
-    const t = d / RIVER_W;
+  if (sd > RIVER_W) { // niva uvnitř labského oblouku
+    const dd = sd - RIVER_W;
+    h = 0.4 + Math.min(dd * 0.004, 2.5) + (n - 0.5) * 5 * smoothstep(40, 300, dd) + smoothstep(200, 600, dd) * 6 * n;
+  } else if (sd >= -RIVER_W) {
+    const t = sd / RIVER_W;
     h = -1.6 * (1 - t * t) - 0.1;
-  } else {
-    const dd = d - RIVER_W;
-    const cliff = 1.2 + 2.4 * Math.exp(-((x / 140) ** 2));
-    h = 0.4 + cliff * smoothstep(0, 6, dd) + Math.min(dd * 0.01, 3) +
+  } else { // levý břeh se skalní terasou pod zámkem
+    const dd = -sd - RIVER_W;
+    const cliff = 1.0 + 2.8 * Math.exp(-((x - CASTLE[0]) ** 2 + (z - CASTLE[1]) ** 2) / (2 * 110 * 110));
+    h = 0.4 + cliff * smoothstep(0, 7, dd) + Math.min(dd * 0.01, 3) +
       (n - 0.5) * 8 * smoothstep(40, 300, dd) + smoothstep(150, 600, dd) * 6 * n;
   }
-  h += (fbm(x * 0.05 + 100, z * 0.05) - 0.5) * 0.3 * smoothstep(0, 10, Math.abs(d) - RIVER_W);
+  h += (fbm(x * 0.05 + 100, z * 0.05) - 0.5) * 0.3 * smoothstep(0, 10, Math.abs(sd) - RIVER_W);
   const r = Math.hypot(x - RIP[0], z - RIP[1]);
   h += 38 * Math.exp(-Math.pow(r / 50, 2.2));
-  h += 4 * Math.exp(-((x - HILL[0]) ** 2 + (z - HILL[1]) ** 2) / (2 * 45 * 45));
   return h;
 }
 
@@ -138,18 +194,18 @@ container.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const SKY = col('#a9cbe3');
 scene.background = SKY;
-scene.fog = new THREE.Fog(SKY, 450, 1350);
+scene.fog = new THREE.Fog(SKY, 500, 1500);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.5, 4000);
-camera.position.set(-125, 125, -215);
+camera.position.set(-95, 150, -255);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(30, 0, 60);
+controls.target.set(0, 0, 40);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.maxPolarAngle = 1.45;
 controls.minDistance = 12;
-controls.maxDistance = 1100;
+controls.maxDistance = 1200;
 controls.update();
 
 scene.add(new THREE.HemisphereLight(0xe4f0ff, 0x5a4d3a, 0.95));
@@ -158,7 +214,7 @@ sun.position.set(-160, 260, 220);
 sun.target.position.set(0, 0, 30);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -240, right: 240, top: 240, bottom: -240, near: 10, far: 900 });
+Object.assign(sun.shadow.camera, { left: -280, right: 280, top: 280, bottom: -280, near: 10, far: 900 });
 sun.shadow.bias = -0.0008;
 scene.add(sun, sun.target);
 
@@ -173,14 +229,15 @@ const warp = (u) => (TERRAIN_SIZE / 2) * (0.35 * u + 0.65 * u * u * u);
 const V = {
   x: new Float32Array(VCOUNT), z: new Float32Array(VCOUNT), h: new Float32Array(VCOUNT),
   d: new Float32Array(VCOUNT), forest: new Float32Array(VCOUNT), cult: new Float32Array(VCOUNT),
-  rip: new Float32Array(VCOUNT), town: new Float32Array(VCOUNT), vary: new Float32Array(VCOUNT), cell: new Int32Array(VCOUNT),
+  rip: new Float32Array(VCOUNT), town: new Float32Array(VCOUNT), vary: new Float32Array(VCOUNT),
+  cell: new Int32Array(VCOUNT),
 };
 for (let i = 0; i < VCOUNT; i++) {
   const x = warp(tPos.getX(i)), z = warp(tPos.getZ(i));
   const h = height(x, z);
   tPos.setXYZ(i, x, h, z);
   V.x[i] = x; V.z[i] = z; V.h[i] = h;
-  V.d[i] = z - riverZ(x);
+  V.d[i] = riverSD(x, z);
   V.forest[i] = fbm(x * 0.009 + 50, z * 0.009 - 20, 4);
   V.cult[i] = 0.6 * fbm(x * 0.004 + 10, z * 0.004 + 3, 3) + 0.4 * Math.min(1, Math.hypot(x, z) / 700);
   V.rip[i] = Math.hypot(x - RIP[0], z - RIP[1]);
@@ -218,17 +275,17 @@ const C = {
 const FOREST_TH = [[0, 0.47], [450, 0.44], [700, 0.46], [1000, 0.52], [1300, 0.58], [1700, 0.61], [1900, 0.63], [2026, 0.62]];
 const CULT = [[0, 0.33], [400, 0.3], [500, 0.17], [650, 0.25], [900, 0.4], [1100, 0.55], [1250, 0.7], [1400, 0.86], [1500, 0.96], [2026, 0.96]];
 
-function isForestAt(forestN, ripR, d, townR, year) {
+function isForestAt(forestN, ripR, sd, townR, year) {
   if (ripR < 55) return forestN > 0.22;
   let th = piecewise(FOREST_TH, year);
+  if (sd > RIVER_W && sd < RIVER_W + 45) th -= 0.06; // lužní lesy v nivě
   // okolí města je od raného středověku odlesněné (pole, pastviny, sady)
-  th += 0.16 * smoothstep(800, 1250, year) * (1 - smoothstep(120, 280, townR));
-  if (d < -RIVER_W && d > -RIVER_W - 45) th -= 0.06; // lužní lesy v nivě
+  th += 0.16 * smoothstep(800, 1250, year) * (1 - smoothstep(140, 300, townR));
   return forestN > th;
 }
 
 // Hustota zástavby (mřížka 4×4 jednotky) – ze zástavby se barví terén a mýtí stromy.
-const GRID_N = 170, GRID_CELL = 4, GRID_O = -GRID_N * GRID_CELL / 2;
+const GRID_N = 260, GRID_CELL = 4, GRID_O = -GRID_N * GRID_CELL / 2;
 const density = new Float32Array(GRID_N * GRID_N);
 const densityTmp = new Float32Array(GRID_N * GRID_N);
 function gridIndex(x, z) {
@@ -272,261 +329,136 @@ function colorTerrain(year) {
 }
 
 // ---------------------------------------------------------------------------
-// Silnice, železnice, hradby – trasy
+// Železnice a dálkové cesty mimo výřez mapy
 // ---------------------------------------------------------------------------
 
-const ROADS = [
-  { pts: [[2, -12], [6, 8], [8, 15], [10, 44], [20, 140], [10, 262], [-40, 600]], from: 900 },     // na Prahu
-  { pts: [[-2, 15], [-24, 20], [-90, 26], [-150, -16], [-350, -62], [-600, -125]], from: 1000 },     // západ podél Labe
-  { pts: [[14, 15], [70, 20], [140, 14], [230, 2], [400, -58], [600, -158]], from: 1000 },        // východ
-  { pts: [[2, -34], [0, -80], [-30, -190], [-60, -600]], from: 900 },                               // sever od mostu
-  { pts: [[20, 140], [150, 220], [330, 300], [362, 342]], from: 1100 },                            // k Řípu
-  { pts: [[30, 195], [-20, 230]], from: 1930 },                                                     // k rozhledně
+// Hlavní trať Praha – Ústí (seřazená od východu k severu) pro jízdu vlaku.
+const TRAIN_PATH = [
+  [600, -480], [560, -462], [478, -376], [379, -272], [283, -171], [240, -127], [214, -98], [184, -68],
+  [171, -55], [158, -44], [142, -37], [125, -31], [108, -26], [98, -23], [78, -17], [57, -13], [25, -13],
+  [1, -16], [-14, -18], [-23, -19], [-42, -23], [-54, -26], [-70, -31], [-85, -36], [-105, -50], [-119, -61],
+  [-133, -75], [-142, -88], [-152, -105], [-168, -146], [-186, -209], [-195, -243], [-205, -320],
+  [-222, -420], [-240, -560], [-262, -800],
 ];
-const BYPASS = [[-260, 10], [-215, 120], [-160, 205], [-60, 268], [80, 255], [230, 180], [300, 70], [330, -20]];
-const RAIL = [[-600, -100], [-300, -40], [-150, 10], [-70, 30], [0, 52], [60, 56], [150, 50], [300, 10], [600, -90]];
-const RAIL_ZLONICE = [[0, 52], [-30, 92], [-80, 175], [-150, 300], [-260, 600]];
-const WALLS = [[-4, -6], [-22, 2], [-24, 44], [72, 44], [72, 0], [24, -7]];
+const RAIL_EXT_MAIN = [
+  [[478, -376], [560, -462], [600, -480]],
+  [[-195, -243], [-205, -320], [-222, -420], [-240, -560], [-262, -800]],
+];
+const RAIL_EXT_BRANCH = [[[-84.5, 287.9], [-84, 400], [-83, 560], [-80, 800]]];
+// Staré zemské cesty k okolním obcím (mimo podrobný výřez mapy)
+const LONG_ROADS = [
+  [[-44, -328], [-70, -450], [-80, -529], [-100, -800]],     // na Chodouny
+  [[-35, -295], [-133, -322]],                                // Černěves
+  [[238, 176], [280, 220], [400, 300], [506, 470]],          // Krabčice – Kostomlaty
+  [[280, 220], [250, 330], [215, 395]],                       // pod Říp
+  [[280, 220], [420, 150], [560, 100], [800, 60]],          // Bechlín
+  [[-232, 308], [-260, 400], [-306, 577], [-330, 800]],      // Račiněves
+  [[-29, 170], [-60, 250], [-96, 362], [-83, 674], [-80, 800]], // Kleneč – Straškov
+  [[-480, 114], [-482, 241]],                                 // Přestavlky
+  [[-480, 114], [-508, 8], [-600, -60]],                      // Dušníky
+  [[226, -136], [300, -250], [403, -355], [633, -398]],      // Záluží – Račice
+  [[-80, -529], [-231, -571]],                                // Libotenice
+  [[141, 661], [160, 500], [215, 470]],                       // Mnetěš
+  [[321, 562], [260, 470]],                                   // Ctiněves
+];
 
 // ---------------------------------------------------------------------------
-// Zástavba
+// Zástavba: půdorysy z OpenStreetMap + odhad doby vzniku podle polohy
 // ---------------------------------------------------------------------------
 
 const buildings = [];
-const occ = new Map();
-const reserved = []; // {test(x,z,r) -> bool, start}
+const KINDS = ['res', 'gar', 'ind', 'shop', 'civ', 'farm'];
 
-function reserveRect(x0, z0, x1, z1, start) {
-  reserved.push({ start, test: (x, z, r) => x > x0 - r && x < x1 + r && z > z0 - r && z < z1 + r });
-}
-function reservePoly(pts, width, start, end = Infinity) {
-  reserved.push({ start, end, test: (x, z, r) => polyDist(x, z, pts) < width + r });
-}
-function occKeys(x, z) {
-  return [Math.floor(x / 4), Math.floor(z / 4)];
-}
+function inJewishQuarter(x, z) { return x > -80 && x < -44 && z > -32 && z < -8; }
 
-function addBuilding(b) {
-  b.r = Math.hypot(b.w, b.d) * 0.45;
-  b.end = b.end ?? Infinity;
-  const dRiver = b.z - riverZ(b.x);
-  if (dRiver < RIVER_W + (b.bank ?? 5)) return false;
-  for (const res of reserved) {
-    if (res.end !== undefined && res.end <= b.start) continue;
-    if (!res.test(b.x, b.z, b.r * 0.8)) continue;
-    if (res.start <= b.start) return false;
-    b.end = Math.min(b.end, res.start); // stavba ustoupí pozdější (např. železnici)
-    if (b.end - b.start < 15) return false;
-  }
-  const [ci, cj] = occKeys(b.x, b.z);
-  for (let di = -2; di <= 2; di++) {
-    for (let dj = -2; dj <= 2; dj++) {
-      const list = occ.get((ci + di) * 100003 + (cj + dj));
-      if (!list) continue;
-      for (const o of list) {
-        if (o.start >= b.end || b.start >= o.end) continue;
-        if (Math.hypot(o.x - b.x, o.z - b.z) < (o.r + b.r) * 0.92) return false;
-      }
+// Vrací {type, start, end?} – kdy a jak budova na daném místě vznikla (schematicky).
+function classify(x, z, kind, levels, w, d) {
+  const r = rand();
+  const dTown = Math.hypot(x - SQUARE[0], z - SQUARE[1]);
+  if (polyDist(x, z, TRAIN_PATH) < 3.5) return { type: kind === 'gar' ? 'garage' : 'hall', start: 1850 + r * 60 };
+  for (const [, vx, vz, vr, found] of VILLAGES) {
+    const dv = Math.hypot(x - vx, z - vz);
+    if (dv < vr) return { type: kind === 'farm' ? 'farm' : 'rural', start: found + r * 140 };
+    if (dv < vr * 2.4) {
+      return { type: kind === 'gar' ? 'garage' : kind === 'farm' ? 'farm' : 'rural', start: 1780 + r * 170 };
     }
   }
-  const key = ci * 100003 + cj;
-  if (!occ.has(key)) occ.set(key, []);
-  occ.get(key).push(b);
-  b.seed = rand();
-  buildings.push(b);
-  return true;
-}
-
-// Domy podél ulice (obě strany nebo jen jedna).
-function houseRow(ax, az, bx, bz, o) {
-  const L = Math.hypot(bx - ax, bz - az);
-  const dx = (bx - ax) / L, dz = (bz - az) / L;
-  const nx = -dz, nz = dx;
-  const rot = Math.atan2(-dz, dx);
-  for (const side of o.sides ?? [-1, 1]) {
-    let t = rand() * o.frontage * 0.5;
-    while (t < L - o.frontage * 0.5) {
-      const w = o.frontage * rr(0.8, 1.2);
-      const d = o.depth * rr(0.85, 1.15);
-      const off = (o.street ?? 1) / 2 + (o.setback ?? 0) + d / 2;
-      const px = ax + dx * (t + w / 2) + nx * side * off;
-      const pz = az + dz * (t + w / 2) + nz * side * off;
-      if (rand() < (o.fill ?? 0.95)) {
-        addBuilding({
-          x: px, z: pz, w: w * 0.96, d, rot,
-          h: rr(o.hMin, o.hMax), rh: o.roof ?? 0.7,
-          type: o.type, start: o.year(px, pz), end: o.end,
-        });
-      }
-      t += w + (o.gap ?? 0);
-    }
+  if (kind === 'shop') return { type: 'shop', start: 1993 + r * 25 };
+  if (kind === 'ind') {
+    return { type: 'hall', start: 1868 + Math.min(1, dTown / 250) * 80 + r * 30, end: r < 0.2 ? 1992 + r * 80 : Infinity };
   }
-}
-
-// Pravoúhlá síť ulic v obdélníku (lehce nepravidelná). Vrací seznam ulic.
-function gridZone(o) {
-  const [x0, z0, x1, z1] = o.rect;
-  const streets = [];
-  const jit = o.jitter ?? 0;
-  for (let x = x0 + rr(0, o.sx * 0.5); x <= x1; x += o.sx * rr(0.85, 1.15)) {
-    streets.push([[x + rr(-jit, jit), z0], [x + rr(-jit, jit), z1]]);
+  if (pointInPoly(x, z, WALLS)) {
+    return { type: kind === 'gar' ? 'garage' : 'house', start: kind === 'gar' ? 1930 + r * 60 : 1230 + Math.min(1, dTown / 30) * 120 + r * 50 };
   }
-  for (let z = z0 + rr(0, o.sz * 0.5); z <= z1; z += o.sz * rr(0.85, 1.15)) {
-    streets.push([[x0, z + rr(-jit, jit)], [x1, z + rr(-jit, jit)]]);
-  }
-  for (const s of streets) houseRow(s[0][0], s[0][1], s[1][0], s[1][1], o);
-  return streets;
+  if (inJewishQuarter(x, z)) return { type: kind === 'gar' ? 'garage' : 'house', start: 1614 + r * 90 };
+  const panel = levels >= 5 || (kind === 'res' && w >= 4.5 && d >= 1.0 && d <= 1.9 && w / d >= 2.8 && dTown > 40);
+  if (panel) return { type: 'panel', start: 1962 + r * 28 };
+  let ring;
+  if (dTown < 55) ring = { type: 'house', start: 1420 + r * 380 };
+  else if (dTown < 100) ring = { type: 'tenement', start: 1850 + r * 64 };
+  else if (dTown < 150) ring = { type: 'villa', start: 1918 + r * 47 };
+  else if (dTown < 320) ring = { type: 'modern', start: 1960 + Math.min(1, (dTown - 150) / 150) * 45 + r * 20 };
+  else ring = { type: 'modern', start: 1950 + r * 76 };
+  if (kind === 'gar') return { type: 'garage', start: Math.max(ring.start, 1925 + r * 60) };
+  if (kind === 'farm') return { type: 'farm', start: Math.min(ring.start, 1750 + r * 200) };
+  if (kind === 'civ') return { type: 'civic', start: Math.max(ring.start, 1870 + r * 100) };
+  return ring;
 }
 
-function growthYear(start, end, cx, cz, radius, spread = 0.35) {
-  return (x, z) => {
-    const f = clamp(Math.hypot(x - cx, z - cz) / radius * (1 - spread) + rand() * spread, 0, 1);
-    return Math.round(start + (end - start) * f);
-  };
+const HEIGHTS = {
+  house: [0.8, 1.2, 0.7], tenement: [1.3, 1.9, 0.6], villa: [0.7, 0.85, 0.55], modern: [0.6, 0.75, 0.45],
+  rural: [0.55, 0.7, 0.55], farm: [0.6, 0.85, 0.6], garage: [0.25, 0.3, 0.03], hall: [0.9, 1.4, 0.25],
+  shop: [0.7, 0.9, 0.03], civic: [1.2, 1.8, 0.4], panel: [2.4, 3.6, 0.03], hut: [0.3, 0.45, 0.6],
+};
+for (let i = 0; i < BUILDINGS.length; i += 7) {
+  const [x, z, w, d, ang, levels, k] = BUILDINGS.slice(i, i + 7);
+  const kind = KINDS[k];
+  const c = classify(x, z, kind, levels, w, d);
+  const [h0, h1, roof] = HEIGHTS[c.type];
+  let h = rr(h0, h1);
+  if (levels > 0 && c.type !== 'garage') h = levels * 0.3 + 0.15;
+  buildings.push({
+    x, z, w, d, rot: -ang, h, rh: Math.min(roof, d * 0.5), type: c.type,
+    start: Math.round(c.start), end: c.end ?? Infinity,
+  });
 }
 
+// Chaty a vesnice mimo podrobnou mapu
 function huts(cx, cz, radius, n, start, end, demolish) {
-  for (let i = 0; i < n * 3 && n > 0; i++) {
+  for (let i = 0; i < n * 4 && n > 0; i++) {
     const a = rand() * Math.PI * 2, r = Math.sqrt(rand()) * radius;
-    if (addBuilding({
-      x: cx + Math.cos(a) * r, z: cz + Math.sin(a) * r, w: rr(1.6, 2.6), d: rr(0.8, 1.1), rot: rand() * Math.PI,
-      h: rr(0.3, 0.45), rh: rr(0.5, 0.7), type: 'hut', start: Math.round(rr(start, end)), end: demolish,
-    })) n--;
+    const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+    if (Math.abs(riverSD(x, z)) < RIVER_W + 4) continue;
+    buildings.push({
+      x, z, w: rr(1.6, 2.6), d: rr(0.8, 1.1), rot: rand() * Math.PI, h: rr(0.3, 0.45), rh: rr(0.5, 0.7),
+      type: 'hut', start: Math.round(rr(start, end)), end: demolish,
+    });
+    n--;
   }
 }
-
-function village(cx, cz, radius, start) {
+function farVillage(cx, cz, start) {
   const ring = (r, n, y0, y1, type) => {
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + rr(-0.1, 0.1);
-      const rad = r * rr(0.9, 1.1);
-      addBuilding({
-        x: cx + Math.cos(a) * rad, z: cz + Math.sin(a) * rad * 0.7,
-        w: type === 'modern' ? 1.1 : 1.3, d: type === 'modern' ? 1.1 : 2.4, rot: -a,
-        h: rr(0.6, 0.8), rh: 0.6, type, start: Math.round(rr(y0, y1)), bank: 8,
+      const rad = r * rr(0.85, 1.15);
+      const x = cx + Math.cos(a) * rad, z = cz + Math.sin(a) * rad * 0.75;
+      if (Math.abs(riverSD(x, z)) < RIVER_W + 5) continue;
+      buildings.push({
+        x, z, w: type === 'modern' ? 1.1 : 1.3, d: type === 'modern' ? 1.1 : 2.4, rot: -a,
+        h: rr(0.55, 0.75), rh: 0.55, type, start: Math.round(rr(y0, y1)), end: Infinity,
       });
     }
   };
-  ring(radius, Math.round(radius * 0.9), start, start + 150, 'rural');
-  ring(radius * 1.6, Math.round(radius * 1.2), 1780, 1910, 'rural');
-  ring(radius * 2.3, Math.round(radius * 1.4), 1965, 2026, 'modern');
+  ring(9, 9, start, start + 150, 'rural');
+  ring(15, 13, 1780, 1910, 'rural');
+  ring(21, 15, 1965, 2026, 'modern');
 }
-
-function panelEstate(rect, start, end, angle) {
-  const [x0, z0, x1, z1] = rect;
-  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
-  const ca = Math.cos(angle), sa = Math.sin(angle);
-  const hw = (x1 - x0) / 2, hd = (z1 - z0) / 2;
-  for (let v = -hd; v <= hd; v += rr(7, 9)) {
-    for (let u = -hw; u <= hw; u += rr(11, 14)) {
-      if (rand() < 0.15) continue;
-      const tower = rand() < 0.18;
-      const x = cx + u * ca - v * sa, z = cz + u * sa + v * ca;
-      addBuilding({
-        x, z, w: tower ? 1.8 : rr(6, 10), d: tower ? 1.8 : 1.3, rot: -angle,
-        h: tower ? rr(3.6, 4.2) : rr(1.6, 3.0), rh: 0.05, type: 'panel',
-        start: Math.round(rr(start, end)),
-      });
-    }
-  }
-}
-
-function halls(rect, start, end, n, type, closeShare = 0) {
-  const [x0, z0, x1, z1] = rect;
-  for (let i = 0; i < n * 4 && n > 0; i++) {
-    const big = type === 'shop';
-    if (addBuilding({
-      x: rr(x0, x1), z: rr(z0, z1), w: big ? rr(5, 9) : rr(3, 6.5), d: big ? rr(3, 5) : rr(2, 3.2),
-      rot: rr(-0.15, 0.15) + (rand() < 0.5 ? 0 : Math.PI / 2), h: big ? rr(0.8, 1.2) : rr(0.9, 1.6),
-      rh: big ? 0.05 : 0.35, type, start: Math.round(rr(start, end)),
-      end: rand() < closeShare ? Math.round(rr(1992, 2010)) : undefined,
-    })) n--;
-  }
-}
-
-// --- rezervace míst pro památky a trasy (dříve než se generují domy) ---
-reserveRect(-2, 11, 14, 19, 1200);          // náměstí
-reserveRect(-26, -16, -2, 3, 1189);         // hrad / zámek
-reserveRect(-32, 0, -18, 9, 1660);          // jízdárna
-reserveRect(8, -14, 25, -1, 1333);          // klášter a kostel
-reserveRect(-40, 25, -28, 36, 1615);        // kapucíni
-reserveRect(-38, 45, -32, 51, 1852);        // synagoga
-reserveRect(-5, 53, 6, 59, 1850);           // nádraží
-reserveRect(-4, -40, 8, -10, 1333);         // předmostí
-reservePoly(WALLS, 1.2, 1390, 1860);
-reservePoly(RAIL, 2.6, 1850);
-reservePoly(RAIL_ZLONICE, 2.2, 1900);
-reservePoly(BYPASS, 3, 2019);
-for (const r of ROADS) reservePoly(r.pts, 1.1, r.from);
-
-// --- osídlení před vznikem města ---
-huts(-28, 8, 16, 9, 0, 60, 460);              // germánská osada u brodu
-huts(-8, 6, 20, 13, 610, 880, 1240);           // slovanská osada
-huts(40, 24, 14, 7, 820, 1000, 1290);
-huts(-150, -12, 12, 5, 900, 1100, 1300);       // zárodek Podlusk
-huts(30, 196, 12, 5, 950, 1150, 1300);         // zárodek Hracholusk
-
-// --- Staré Město (13.–14. století) ---
-const oldTown = { type: 'house', frontage: 1.5, depth: 2.3, hMin: 0.9, hMax: 1.4, roof: 0.8, street: 1.0 };
-const otYear = growthYear(1220, 1360, 6, 15, 40);
-houseRow(-2, 11, 14, 11, { ...oldTown, sides: [-1], street: 0, year: otYear, fill: 1 });
-houseRow(-2, 19, 14, 19, { ...oldTown, sides: [1], street: 0, year: otYear, fill: 1 });
-houseRow(-2, 11, -2, 19, { ...oldTown, sides: [1], street: 0, year: otYear, fill: 1 });
-houseRow(14, 11, 14, 19, { ...oldTown, sides: [-1], street: 0, year: otYear, fill: 1 });
-const oldStreets = gridZone({ ...oldTown, rect: [-20, -1, 30, 42], sx: 8.5, sz: 8, jitter: 1.2, year: otYear });
-// Nové Město (konec 14. století)
-const newStreets = gridZone({ ...oldTown, rect: [33, -1, 70, 42], sx: 9.5, sz: 9, jitter: 1, year: growthYear(1375, 1470, 33, 20, 40) });
-// Předměstí podél cest (renesance a baroko)
-for (const [a, b] of [[[12, 46], [20, 120]], [[-26, 20], [-90, 27]], [[74, 20], [140, 14]]]) {
-  houseRow(a[0], a[1], b[0], b[1], { ...oldTown, street: 2.4, hMin: 0.7, hMax: 1.0, fill: 0.8, year: growthYear(1500, 1820, a[0], a[1], 90, 0.5) });
-}
-// Židovská čtvrť (po roce 1614)
-const jewStreets = gridZone({ ...oldTown, rect: [-60, 20, -40, 42], sx: 6, sz: 6, jitter: 0.6, frontage: 1.2, year: growthYear(1614, 1700, -50, 32, 15) });
-// Vesnice
-village(-152, -16, 10, 1250);  // Podlusky
-village(30, 196, 10, 1250);    // Hracholusky
-village(225, 8, 9, 1200);      // Vědomice
-village(-40, -190, 9, 1150);   // Dobříň
-village(180, -155, 8, 1200);   // Počaply
-village(-370, 110, 10, 1100);  // Bechlín
-village(330, 300, 9, 1150);    // Krabčice pod Řípem
-village(470, 250, 8, 1200);
-village(-260, 320, 8, 1200);
-village(120, 420, 8, 1250);
-
-// --- 19. století: činžovní domy a průmysl ---
-const c19 = gridZone({
-  type: 'tenement', rect: [-55, 46, 110, 125], sx: 11, sz: 10, jitter: 0.3, frontage: 1.8, depth: 2.4,
-  hMin: 1.5, hMax: 2.2, roof: 0.7, street: 1.4, fill: 0.9, year: growthYear(1852, 1914, 10, 50, 120, 0.3),
-});
-halls([85, 58, 190, 82], 1868, 1925, 22, 'hall', 0.4);
-// --- první republika: vily ---
-const villas1 = gridZone({
-  type: 'villa', rect: [-150, 32, -62, 128], sx: 9, sz: 7, frontage: 1.3, depth: 1.3, setback: 0.9, gap: 1.1,
-  hMin: 0.7, hMax: 0.95, roof: 0.6, street: 1.1, fill: 0.85, year: growthYear(1919, 1940, -62, 60, 110, 0.4),
-});
-const villas2 = gridZone({
-  type: 'villa', rect: [-50, 128, 70, 172], sx: 9, sz: 7, frontage: 1.3, depth: 1.3, setback: 0.9, gap: 1.1,
-  hMin: 0.7, hMax: 0.95, roof: 0.6, street: 1.1, fill: 0.8, year: growthYear(1925, 1965, 10, 128, 120, 0.4),
-});
-// --- sídliště ---
-panelEstate([112, 90, 215, 165], 1966, 1989, 0.12);
-panelEstate([-210, 140, -125, 200], 1976, 1988, -0.2);
-// --- po roce 1990: rodinné domy a obchodní zóny ---
-const mod1 = gridZone({
-  type: 'modern', rect: [-265, 30, -165, 125], sx: 8, sz: 7, frontage: 1.3, depth: 1.2, setback: 0.9, gap: 1.2,
-  hMin: 0.6, hMax: 0.8, roof: 0.5, street: 1.1, fill: 0.75, year: growthYear(1994, 2026, -165, 70, 120, 0.4),
-});
-const mod2 = gridZone({
-  type: 'modern', rect: [222, 40, 290, 160], sx: 8, sz: 7, frontage: 1.3, depth: 1.2, setback: 0.9, gap: 1.2,
-  hMin: 0.6, hMax: 0.8, roof: 0.5, street: 1.1, fill: 0.7, year: growthYear(1996, 2026, 222, 90, 110, 0.4),
-});
-const mod3 = gridZone({
-  type: 'modern', rect: [70, 175, 150, 222], sx: 8, sz: 7, frontage: 1.3, depth: 1.2, setback: 0.9, gap: 1.2,
-  hMin: 0.6, hMax: 0.8, roof: 0.5, street: 1.1, fill: 0.7, year: growthYear(2002, 2026, 70, 175, 100, 0.4),
-});
-halls([200, 185, 290, 230], 2003, 2025, 10, 'shop');
-halls([-250, 150, -215, 190], 2005, 2024, 5, 'shop');
+huts(-30, 2, 18, 9, 0, 60, 460);          // germánská osada u brodu
+huts(-14, 8, 22, 14, 610, 880, 1240);     // slovanská osada
+huts(-55, -92, 12, 5, 850, 1100, 1450);   // osada v nivě (dnešní Vědomice)
+huts(226, -136, 10, 4, 1000, 1150, 1300); // zárodek Dobříně
+huts(-250, 48, 10, 4, 950, 1150, 1300);   // zárodek Podlusk
+for (const [, x, z] of FAR_VILLAGES) farVillage(x, z, Math.round(rr(1150, 1300)));
 
 // ---------------------------------------------------------------------------
 // Instancované budovy
@@ -559,10 +491,13 @@ for (const m of [bodies, roofs]) {
 const B_HEIGHT = 1.3; // budovy mírně převýšené kvůli čitelnosti
 for (const b of buildings) {
   let g = Infinity;
+  const c = Math.cos(b.rot), s = Math.sin(b.rot);
   for (const [ox, oz] of [[0, 0], [0.5, 0.5], [-0.5, 0.5], [0.5, -0.5], [-0.5, -0.5]]) {
-    g = Math.min(g, height(b.x + ox * b.w, b.z + oz * b.d));
+    const lx = ox * b.w, lz = oz * b.d;
+    g = Math.min(g, height(b.x + lx * c + lz * s, b.z - lx * s + lz * c));
   }
   b.y = g - 0.3;
+  b.seed = rand();
 }
 
 const PAL = {
@@ -578,6 +513,9 @@ const PAL = {
   hall: { walls: ['#a0522d', '#9b6a52', '#8c6a5a', '#a38b75'], roofs: ['#5b5b5b', '#6a625a'] },
   shop: { walls: ['#d0d4d8', '#c4cbd2', '#e2e4e6'], roofs: ['#9aa0a6'] },
   modern: { walls: ['#f4f1ea', '#e9e5dc', '#dcd7cb', '#f0e6d2', '#e3e7ea'], roofs: ['#4a4a4a', '#7a3b2e', '#3d3d3d', '#8c4632'] },
+  garage: { walls: ['#bdb7ad', '#a9a49b', '#c8c2b6'], roofs: ['#6f6f6f', '#7d776d'] },
+  farm: { walls: ['#b9a48a', '#c9b79a', '#a8927a'], roofs: ['#8f4a33', '#7a5a42', '#9a8455'] },
+  civic: { walls: ['#e6dcc6', '#d9cdb3', '#ece4d2'], roofs: ['#6b4a3c', '#7d3a2a', '#5f5a55'] },
 };
 for (const k in PAL) {
   PAL[k].walls = PAL[k].walls.map(col);
@@ -609,7 +547,7 @@ function colorBuildings(year) {
 const FIRES = [[1421, 1426], [1425, 1428], [1428, 1433], [1634, 1638], [1639, 1646]];
 function burned(b, year) {
   for (const [a, e] of FIRES) {
-    if (year >= a && year < e && b.start < a && b.x > -70 && b.x < 80 && b.z < 60 && b.z > -20) {
+    if (year >= a && year < e && b.start < a && b.x > -85 && b.x < 20 && b.z < 40 && b.z > -35) {
       return hash2(b.seed * 100, a) < 0.45;
     }
   }
@@ -618,10 +556,8 @@ function burned(b, year) {
 
 const dummy = new THREE.Object3D();
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
-let visibleCount = 0;
 function updateBuildings(year) {
   density.fill(0);
-  visibleCount = 0;
   for (let i = 0; i < NB; i++) {
     const b = buildings[i];
     if (year < b.start || year >= b.end || burned(b, year)) {
@@ -629,7 +565,6 @@ function updateBuildings(year) {
       roofs.setMatrixAt(i, ZERO);
       continue;
     }
-    visibleCount++;
     const grow = clamp((year - b.start) / 3, 0.08, 1);
     const h = b.h * B_HEIGHT * grow + 0.3;
     dummy.position.set(b.x, b.y, b.z);
@@ -658,61 +593,10 @@ function updateBuildings(year) {
 }
 
 // ---------------------------------------------------------------------------
-// Stromy
+// Cesty, ulice a koleje (pásy kopírující terén)
 // ---------------------------------------------------------------------------
 
-const trees = [];
-const roadsAll = ROADS.map((r) => r.pts);
-while (trees.length < 13000) {
-  const near = trees.length < 5000;
-  const x = near ? rr(-260, 260) : rr(-560, 560);
-  const z = near ? rr(-260, 280) : rr(-560, 560);
-  const d = z - riverZ(x);
-  if (Math.abs(d) < RIVER_W + 1.5) continue;
-  const forestN = fbm(x * 0.009 + 50, z * 0.009 - 20, 4);
-  const ripR = Math.hypot(x - RIP[0], z - RIP[1]);
-  if (forestN < 0.38 && ripR > 55) continue;
-  if (roadsAll.some((p) => polyDist(x, z, p) < 2)) continue;
-  trees.push({ x, z, y: height(x, z), forestN, ripR, d, townR: Math.hypot(x - TOWN[0], z - TOWN[1]), s: rr(0.8, 1.5), conifer: rand() < 0.25, cell: gridIndex(x, z) });
-}
-const leafy = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: 0x3f6a30 }), trees.length);
-const conif = new THREE.InstancedMesh(new THREE.ConeGeometry(0.8, 2.6, 6), new THREE.MeshLambertMaterial({ color: 0x2c4c2a }), trees.length);
-for (const m of [leafy, conif]) { m.castShadow = true; m.frustumCulled = false; scene.add(m); }
-const treeTint = new THREE.Color();
-trees.forEach((t, i) => {
-  treeTint.setHSL(0.26 + hash2(t.x, t.z) * 0.06, 0.38, 0.22 + hash2(t.z, t.x) * 0.1);
-  leafy.setColorAt(i, treeTint);
-  conif.setColorAt(i, treeTint.offsetHSL(0.02, 0, -0.06));
-});
-function updateTrees(year) {
-  trees.forEach((t, i) => {
-    const show = isForestAt(t.forestN, t.ripR, t.d, t.townR, year) && (t.cell < 0 || density[t.cell] < 0.08);
-    if (!show) {
-      leafy.setMatrixAt(i, ZERO); conif.setMatrixAt(i, ZERO);
-      return;
-    }
-    dummy.rotation.set(0, t.x, 0);
-    if (t.conifer) {
-      dummy.position.set(t.x, t.y + 1.2 * t.s, t.z);
-      dummy.scale.setScalar(t.s);
-      dummy.updateMatrix();
-      conif.setMatrixAt(i, dummy.matrix); leafy.setMatrixAt(i, ZERO);
-    } else {
-      dummy.position.set(t.x, t.y + 1.1 * t.s, t.z);
-      dummy.scale.set(1.2 * t.s, 1.3 * t.s, 1.2 * t.s);
-      dummy.updateMatrix();
-      leafy.setMatrixAt(i, dummy.matrix); conif.setMatrixAt(i, ZERO);
-    }
-  });
-  leafy.instanceMatrix.needsUpdate = true;
-  conif.instanceMatrix.needsUpdate = true;
-}
-
-// ---------------------------------------------------------------------------
-// Cesty (pásy kopírující terén)
-// ---------------------------------------------------------------------------
-
-const timed = []; // objekty s viditelností dle roku: {obj, from, to, update?}
+const timed = []; // objekty s viditelností dle roku: {obj, from, to}
 
 function ribbonGeometry(lines, width, yOff) {
   const pos = [], idx = [];
@@ -725,7 +609,8 @@ function ribbonGeometry(lines, width, yOff) {
       const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
       const nx = -tz * width / 2, nz = tx * width / 2;
       const [x, z] = pts[i];
-      pos.push(x + nx, height(x + nx, z + nz) + yOff, z + nz, x - nx, height(x - nx, z - nz) + yOff, z - nz);
+      pos.push(x + nx, Math.max(0.05, height(x + nx, z + nz)) + yOff, z + nz,
+        x - nx, Math.max(0.05, height(x - nx, z - nz)) + yOff, z - nz);
       if (i > 0) {
         const k = base + (i - 1) * 2;
         idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
@@ -753,39 +638,110 @@ function roadColor(year) {
   return c;
 }
 const roadMeshes = [];
-function timedRibbon(lines, width, from, to = Infinity) {
-  const m = ribbon(lines, width, 0xa8936f);
-  roadMeshes.push(m);
-  timed.push({ obj: m, from, to });
-}
-for (const r of ROADS) timedRibbon([r.pts], 1.5, r.from);
-timedRibbon(oldStreets, 0.9, 1240);
-timedRibbon(newStreets, 0.9, 1390);
-timedRibbon(jewStreets, 0.7, 1620);
-timedRibbon(c19, 1.2, 1860);
-timedRibbon(villas1, 1.0, 1922);
-timedRibbon(villas2, 1.0, 1930);
-timedRibbon(mod1, 1.0, 1996);
-timedRibbon(mod2, 1.0, 1998);
-timedRibbon(mod3, 1.0, 2004);
-// Obchvat
-const bypass = ribbon([BYPASS], 2.4, 0x55575a, 0.15);
-timed.push({ obj: bypass, from: 2021 });
-// Náměstí
-const square = new THREE.Mesh(new THREE.PlaneGeometry(16, 8), new THREE.MeshLambertMaterial({
-  color: 0xb8ad98, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
-}));
-square.rotation.x = -Math.PI / 2;
-square.position.set(6, height(6, 15) + 0.12, 15);
-scene.add(square);
-timed.push({ obj: square, from: 1250 });
 
-// Železnice
-const ballast = ribbon([RAIL], 1.6, 0x7a6f63, 0.14);
-const track = ribbon([RAIL], 0.6, 0x3e352e, 0.22);
-const ballast2 = ribbon([RAIL_ZLONICE], 1.3, 0x7a6f63, 0.14);
-const track2 = ribbon([RAIL_ZLONICE], 0.5, 0x3e352e, 0.22);
-timed.push({ obj: ballast, from: 1850 }, { obj: track, from: 1850 }, { obj: ballast2, from: 1900 }, { obj: track2, from: 1900 });
+// Kdy ulice vznikla – stejná logika jako u zástavby.
+function streetYear(cls, x, z) {
+  if (cls === 'h') return 1000;
+  if (cls === 'p' || cls === 't') return 1250;
+  if (cls === 'm') return 1990;
+  if (cls === 'b') return 2021;
+  for (const [, vx, vz, vr, found] of VILLAGES) {
+    const dv = Math.hypot(x - vx, z - vz);
+    if (dv < vr * 1.2) return found;
+    if (dv < vr * 2.4) return 1800;
+  }
+  if (pointInPoly(x, z, WALLS)) return 1240;
+  if (inJewishQuarter(x, z)) return 1615;
+  const dTown = Math.hypot(x - SQUARE[0], z - SQUARE[1]);
+  if (dTown < 55) return 1450;
+  if (dTown < 100) return 1860;
+  if (dTown < 150) return 1920;
+  return Math.round(1960 + Math.min(1, (dTown - 150) / 150) * 40);
+}
+const STREET_W = { h: 1.4, p: 1.4, t: 1.1, r: 0.8, m: 2.6, b: 2.2 };
+const streetGroups = new Map();
+for (const s of STREETS) {
+  const pts = pairs(s.p);
+  const mid = pts[Math.floor(pts.length / 2)];
+  const year = Math.floor(streetYear(s.c, mid[0], mid[1]) / 10) * 10;
+  const key = `${s.c}|${year}`;
+  if (!streetGroups.has(key)) streetGroups.set(key, { cls: s.c, year, lines: [] });
+  streetGroups.get(key).lines.push(pts);
+}
+streetGroups.get('h|1000')?.lines.push(...LONG_ROADS);
+for (const g of streetGroups.values()) {
+  if (g.cls === 'b' || g.cls === 'm') {
+    timed.push({ obj: ribbon(g.lines, STREET_W[g.cls], 0x55575a, 0.15), from: g.year });
+  } else {
+    const m = ribbon(g.lines, STREET_W[g.cls], 0xa8936f);
+    roadMeshes.push(m);
+    timed.push({ obj: m, from: g.year });
+  }
+}
+
+// Železnice (od 1850 hlavní trať, od 1900 odbočka do Zlonic a vlečky)
+{
+  const main = RAILS.filter((r) => r.u === 'm').map((r) => pairs(r.p)).concat(RAIL_EXT_MAIN);
+  const branch = RAILS.filter((r) => r.u === 'b').map((r) => pairs(r.p)).concat(RAIL_EXT_BRANCH);
+  const yard = RAILS.filter((r) => r.u === 'y').map((r) => pairs(r.p));
+  timed.push(
+    { obj: ribbon(main, 1.4, 0x7a6f63, 0.14), from: 1850 }, { obj: ribbon(main, 0.5, 0x3e352e, 0.22), from: 1850 },
+    { obj: ribbon(branch, 1.2, 0x7a6f63, 0.14), from: 1900 }, { obj: ribbon(branch, 0.45, 0x3e352e, 0.22), from: 1900 },
+    { obj: ribbon(yard, 0.9, 0x6f655a, 0.13), from: 1880 },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Stromy
+// ---------------------------------------------------------------------------
+
+const trees = [];
+while (trees.length < 14000) {
+  const near = trees.length < 5000;
+  const x = near ? rr(-300, 300) : rr(-640, 640);
+  const z = near ? rr(-300, 320) : rr(-640, 640);
+  const sd = riverSD(x, z);
+  if (Math.abs(sd) < RIVER_W + 1.5) continue;
+  const forestN = fbm(x * 0.009 + 50, z * 0.009 - 20, 4);
+  const ripR = Math.hypot(x - RIP[0], z - RIP[1]);
+  if (forestN < 0.38 && ripR > 55) continue;
+  trees.push({
+    x, z, y: height(x, z), forestN, ripR, sd, townR: Math.hypot(x - TOWN[0], z - TOWN[1]),
+    s: rr(0.8, 1.5), conifer: rand() < 0.25, cell: gridIndex(x, z),
+  });
+}
+const leafy = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: 0x3f6a30 }), trees.length);
+const conif = new THREE.InstancedMesh(new THREE.ConeGeometry(0.8, 2.6, 6), new THREE.MeshLambertMaterial({ color: 0x2c4c2a }), trees.length);
+for (const m of [leafy, conif]) { m.castShadow = true; m.frustumCulled = false; scene.add(m); }
+const treeTint = new THREE.Color();
+trees.forEach((t, i) => {
+  treeTint.setHSL(0.26 + hash2(t.x, t.z) * 0.06, 0.38, 0.22 + hash2(t.z, t.x) * 0.1);
+  leafy.setColorAt(i, treeTint);
+  conif.setColorAt(i, treeTint.offsetHSL(0.02, 0, -0.06));
+});
+function updateTrees(year) {
+  trees.forEach((t, i) => {
+    const show = isForestAt(t.forestN, t.ripR, t.sd, t.townR, year) && (t.cell < 0 || density[t.cell] < 0.08);
+    if (!show) {
+      leafy.setMatrixAt(i, ZERO); conif.setMatrixAt(i, ZERO);
+      return;
+    }
+    dummy.rotation.set(0, t.x, 0);
+    if (t.conifer) {
+      dummy.position.set(t.x, t.y + 1.2 * t.s, t.z);
+      dummy.scale.setScalar(t.s);
+      dummy.updateMatrix();
+      conif.setMatrixAt(i, dummy.matrix); leafy.setMatrixAt(i, ZERO);
+    } else {
+      dummy.position.set(t.x, t.y + 1.1 * t.s, t.z);
+      dummy.scale.set(1.2 * t.s, 1.3 * t.s, 1.2 * t.s);
+      dummy.updateMatrix();
+      leafy.setMatrixAt(i, dummy.matrix); conif.setMatrixAt(i, ZERO);
+    }
+  });
+  leafy.instanceMatrix.needsUpdate = true;
+  conif.instanceMatrix.needsUpdate = true;
+}
 
 // ---------------------------------------------------------------------------
 // Památky
@@ -814,10 +770,10 @@ function gable(w, h, d, color, x, y, z, rotY = 0) {
   m.castShadow = true;
   return m;
 }
-function group(parts, from, to = Infinity, extra = {}) {
+function group(parts, from, to = Infinity, extra = {}, parent = scene) {
   const g = new THREE.Group();
   parts.forEach((p) => g.add(p));
-  scene.add(g);
+  parent.add(g);
   timed.push({ obj: g, from, to, ...extra });
   return g;
 }
@@ -825,7 +781,7 @@ const H = (x, z) => height(x, z);
 
 // Románský biskupský hrad (1189/90 – přestavba na zámek)
 {
-  const cx = -14, cz = -6, g = H(cx, cz) - 0.2, stone = '#b9ad92';
+  const [cx, cz] = CASTLE, g = H(cx, cz) - 0.2, stone = '#b9ad92';
   const parts = [
     box(10, 1.6, 0.6, stone, cx, g, cz - 4), box(10, 1.6, 0.6, stone, cx, g, cz + 4),
     box(0.6, 1.6, 8, stone, cx - 5, g, cz), box(0.6, 1.6, 8, stone, cx + 5, g, cz),
@@ -839,42 +795,65 @@ const H = (x, z) => height(x, z);
 }
 // Barokní zámek Lobkoviců (1652–1684), křídla přibývají postupně
 {
-  const cx = -14, cz = -6, g = H(cx, cz) - 0.3, wall = '#efe6cf', roof = '#55565a', rot = -0.05;
-  const wings = [
-    [0, -4.2, 13, 2.4], [0, 4.2, 13, 2.4], [-5.5, 0, 2.4, 6], [5.5, 0, 2.4, 6],
-  ];
+  const [cx, cz] = CASTLE, g = H(cx, cz) - 0.3, wall = '#efe6cf', roof = '#55565a';
+  const wings = [[0, -3.4, 11, 2.2], [0, 3.4, 11, 2.2], [-4.4, 0, 2.2, 4.6], [4.4, 0, 2.2, 4.6]];
   wings.forEach(([ox, oz, w, d], i) => {
-    const hgt = 2.9;
-    const x = cx + ox * Math.cos(rot) + oz * Math.sin(rot);
-    const z = cz - ox * Math.sin(rot) + oz * Math.cos(rot);
     const along = w > d;
     group([
-      box(w, hgt, d, wall, x, g, z, rot),
-      gable(along ? w : d, 1.3, along ? d : w, roof, x, g + hgt, z, rot + (along ? 0 : Math.PI / 2)),
+      box(w, 2.9, d, wall, cx + ox, g, cz + oz),
+      gable(along ? w : d, 1.3, along ? d : w, roof, cx + ox, g + 2.9, cz + oz, along ? 0 : Math.PI / 2),
     ], 1652 + i * 8, Infinity, { grow: true });
   });
-  // jízdárna (dnes Galerie moderního umění)
-  const jx = -25, jz = 4.5, jg = H(jx, jz) - 0.2;
-  group([box(8, 1.7, 2, '#e8dcc0', jx, jg, jz, 0.08), gable(8, 0.9, 2, roof, jx, jg + 1.7, jz, 0.08)], 1680);
 }
 // Augustiniánský klášter a kostel Narození Panny Marie (1333)
 {
-  const cx = 16, cz = -7, g = H(cx, cz) - 0.2, stone = '#d9cfb8', roof = '#7b4a36';
+  const cx = -35, cz = -14, g = H(cx, cz) - 0.2, stone = '#d9cfb8', roof = '#7b4a36';
   group([
-    box(6.5, 2.6, 2.3, stone, cx, g, cz), gable(6.5, 1.8, 2.3, roof, cx, g + 2.6, cz),
-    box(2.4, 2.2, 1.9, stone, cx + 4.3, g, cz), gable(2.4, 1.4, 1.9, roof, cx + 4.3, g + 2.2, cz),
-    box(1.4, 6, 1.4, stone, cx - 3.8, g, cz), cone(1.05, 2.2, '#4f4a45', cx - 3.8, g + 6, cz, 4, Math.PI / 4),
+    box(5.2, 2.6, 2.3, stone, cx, g, cz), gable(5.2, 1.8, 2.3, roof, cx, g + 2.6, cz),
+    box(2, 2.2, 1.9, stone, cx + 3.5, g, cz), gable(2, 1.4, 1.9, roof, cx + 3.5, g + 2.2, cz),
+    box(1.4, 6, 1.4, stone, cx - 3.2, g, cz), cone(1.05, 2.2, '#4f4a45', cx - 3.2, g + 6, cz, 4, Math.PI / 4),
   ], 1333, Infinity, { grow: true });
   group([
-    box(6, 1.8, 1.6, '#cfc4ab', cx, g, cz + 3.6), gable(6, 1, 1.6, roof, cx, g + 1.8, cz + 3.6),
-    box(1.6, 1.8, 3, '#cfc4ab', cx + 3.8, g, cz + 2.6),
+    box(5, 1.8, 1.6, '#cfc4ab', cx, g, cz + 3.4), gable(5, 1, 1.6, roof, cx, g + 1.8, cz + 3.4),
+    box(1.6, 1.8, 3, '#cfc4ab', cx + 3.3, g, cz + 2.4),
   ], 1335, 1421);
-  group([box(6, 0.6, 0.4, '#8f877a', cx, g, cz + 3.6), box(0.4, 0.7, 3, '#8f877a', cx + 3.8, g, cz + 2.6)], 1421, 1600);
+  group([box(5, 0.6, 0.4, '#8f877a', cx, g, cz + 3.4), box(0.4, 0.7, 3, '#8f877a', cx + 3.3, g, cz + 2.4)], 1421, 1600);
+}
+
+// Mosty leží na ose BRIDGE; místní osa x vede od jižního (městského) břehu k severnímu.
+const bridgeAxis = (() => {
+  const [[ax, az], [bx, bz]] = BRIDGE;
+  const L = Math.hypot(bx - ax, bz - az), dx = (bx - ax) / L, dz = (bz - az) / L;
+  let s0 = 0, s1 = L;
+  for (let s = 0; s <= L; s += 0.25) {
+    const sd = riverSD(ax + dx * s, az + dz * s);
+    if (sd < -RIVER_W - 3) s0 = s;
+    if (sd < RIVER_W + 3) s1 = s;
+  }
+  return { ax, az, dx, dz, s0, s1, rot: Math.atan2(-dz, dx) };
+})();
+function bridgeGroup() {
+  const g = new THREE.Group();
+  g.position.set(bridgeAxis.ax, 0, bridgeAxis.az);
+  g.rotation.y = bridgeAxis.rot;
+  scene.add(g);
+  return g;
+}
+// Šikmý nájezd z mostovky na terén na severním břehu.
+function ramp(parent, sFrom, yFrom, length, width, color) {
+  const x = bridgeAxis.ax + bridgeAxis.dx * (sFrom + length), z = bridgeAxis.az + bridgeAxis.dz * (sFrom + length);
+  const yTo = H(x, z) + 0.1;
+  const len = Math.hypot(length, yFrom - yTo);
+  const m = mesh(new THREE.BoxGeometry(len, 0.35, width), color, sFrom + length / 2, (yFrom + yTo) / 2 - 0.17, 0);
+  m.rotation.z = -Math.atan2(yFrom - yTo, length);
+  parent.add(m);
+  return m;
 }
 // Kamenný most Jana IV. z Dražic (1333–1340), zbytky do 1906
 {
-  const bx = 2, zS = -10, zN = -38, n = 9, L = (zS - zN) / n, top = 2.6, bottom = -2.2;
-  const stone = '#a89e8a';
+  const parent = bridgeGroup();
+  const { s0, s1 } = bridgeAxis;
+  const n = 9, L = (s1 - s0) / n, top = 2.6, bottom = -2.2, stone = '#a89e8a';
   for (let i = 0; i < n; i++) {
     // pole mostu s klenutým otvorem (obrys bez děr, aby triangulace byla spolehlivá)
     const r = (L - 0.8) / 2, spring = 0.3;
@@ -888,60 +867,61 @@ const H = (x, z) => height(x, z);
     shape.lineTo(L, top);
     shape.lineTo(0, top);
     shape.lineTo(0, bottom);
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: 1.0, bevelEnabled: false });
-    const m = mesh(geo, stone, bx - 0.5, 0, zS - i * L, Math.PI / 2);
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: 1.0, bevelEnabled: false }).translate(0, 0, -0.5);
     const ruin = i % 3 === 0;
-    group([m], 1333 + (i + 1) * (7 / n), ruin ? 1906 : 1640);
+    group([mesh(geo, stone, s0 + i * L, 0, 0)], 1333 + (i + 1) * (7 / n), ruin ? 1906 : 1640, {}, parent);
   }
+  group([ramp(parent, s1, top, 8, 1.0, stone)], 1340, 1640, {}, parent);
 }
 // Železný most (1906–1910)
 {
-  const bx = 2, zS = -9, zN = -40, deckY = 2.9, steel = '#3f6656';
-  const parts = [box(1.3, 0.35, zS - zN, '#6b6b6b', bx, deckY - 0.35, (zS + zN) / 2)];
-  const spans = [[-17.5, -24.5], [-24.5, -31.5]];
-  for (const [a, b] of spans) {
-    parts.push(box(1.6, deckY + 2, 1.0, '#9a948a', bx, -2, b));
+  const parent = bridgeGroup();
+  const { s0, s1 } = bridgeAxis;
+  const deckY = 3.0, steel = '#3f6656';
+  const parts = [box(s1 - s0 + 2, 0.35, 1.3, '#6b6b6b', (s0 + s1) / 2, deckY - 0.35, 0), ramp(parent, s1 + 1, deckY, 9, 1.3, '#6b6b6b')];
+  const mid = (s0 + s1) / 2;
+  for (const [a, b] of [[s0, mid], [mid, s1]]) {
     for (const side of [-0.6, 0.6]) {
       const pts = [];
       for (let k = 0; k <= 16; k++) {
         const t = k / 16;
-        pts.push(new THREE.Vector3(bx + side, deckY + Math.sin(t * Math.PI) * 2.0, lerp(a, b, t)));
+        pts.push(new THREE.Vector3(lerp(a, b, t), deckY + Math.sin(t * Math.PI) * 2.0, side));
       }
       parts.push(mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.12, 6), steel, 0, 0, 0));
       for (let k = 1; k < 8; k++) {
         const t = k / 8;
-        const hgt = Math.sin(t * Math.PI) * 2.0;
-        parts.push(box(0.08, hgt, 0.08, steel, bx + side, deckY, lerp(a, b, t)));
+        parts.push(box(0.08, Math.sin(t * Math.PI) * 2.0, 0.08, steel, lerp(a, b, t), deckY, side));
       }
     }
   }
-  parts.push(box(1.6, deckY + 2, 1.0, '#9a948a', bx, -2, -17.5));
-  group(parts, 1910);
+  for (const s of [s0, mid, s1]) parts.push(box(1.0, deckY + 2, 1.6, '#9a948a', s, -2, 0));
+  group(parts, 1910, Infinity, {}, parent);
 }
 // Hradby (konec 14. století – 19. století)
 {
   const stone = '#9c917c';
   const segs = [];
-  for (let i = 1; i < WALLS.length; i++) {
-    const [ax, az] = WALLS[i - 1], [bx, bz] = WALLS[i];
+  for (let i = 1; i < WALLS_CLOSED.length; i++) {
+    const [ax, az] = WALLS_CLOSED[i - 1], [bx, bz] = WALLS_CLOSED[i];
     const L = Math.hypot(bx - ax, bz - az), rot = Math.atan2(-(bz - az), bx - ax);
     const steps = Math.ceil(L / 4);
     for (let k = 0; k < steps; k++) {
       const x = lerp(ax, bx, (k + 0.5) / steps), z = lerp(az, bz, (k + 0.5) / steps);
+      if (Math.hypot(x - CASTLE[0], z - CASTLE[1]) < 7) continue; // hrad má vlastní opevnění
       const keep = (i * 7 + k) % 6 === 0;
       const w = box(L / steps + 0.1, 1.5, 0.5, stone, x, H(x, z) - 0.3, z, rot);
       if (keep) segs.push(w); else group([w], 1390, 1860);
     }
-    group([cyl(0.8, 2.3, stone, ax, H(ax, az) - 0.3, az, 10)], 1390, 1860);
+    if (Math.hypot(ax - CASTLE[0], az - CASTLE[1]) > 7) group([cyl(0.8, 2.3, stone, ax, H(ax, az) - 0.3, az, 10)], 1390, 1860);
   }
   group(segs, 1390);
-  for (const [x, z] of [[-24, 22], [72, 22]]) {
+  for (const [x, z] of [[-53, 5], [-20, 30]]) {
     group([box(2, 2.8, 2, stone, x, H(x, z) - 0.3, z), gable(2, 1, 2, '#6d5a42', x, H(x, z) + 2.5, z)], 1395, 1860);
   }
 }
 // Hláska (15. století), od baroka s cibulovitou střechou
 {
-  const x = 10, z = 44, g = H(x, z) - 0.3;
+  const x = -18, z = -4, g = H(x, z) - 0.3;
   group([box(2, 5.5, 2, '#cbbfa6', x, g, z)], 1475, Infinity, { grow: true });
   group([cone(1.5, 2.2, '#5d4a3a', x, g + 5.5, z, 4, Math.PI / 4)], 1475, 1700);
   group([
@@ -950,52 +930,64 @@ const H = (x, z) => height(x, z);
     cone(0.35, 1.5, '#3f4a44', x, g + 7, z, 8),
   ], 1700);
 }
-// Kapucínský klášter s kostelem sv. Václava (1615–1628)
+// Kapucínský klášter s kostelem sv. Václava (1615–1628) u zámku
 {
-  const x = -34, z = 30, g = H(x, z) - 0.3;
+  const x = 14, z = 3, g = H(x, z) - 0.3;
   group([
-    box(1.8, 2.1, 5, '#efe7d4', x - 3, g, z), gable(5, 1.2, 1.8, '#9b4630', x - 3, g + 2.1, z, Math.PI / 2),
-    box(4, 1.6, 0.9, '#e8dfca', x, g, z - 2), box(4, 1.6, 0.9, '#e8dfca', x, g, z + 2),
-    box(0.9, 1.6, 4.9, '#e8dfca', x + 1.6, g, z),
-    gable(4, 0.8, 0.9, '#9b4630', x, g + 1.6, z - 2), gable(4, 0.8, 0.9, '#9b4630', x, g + 1.6, z + 2),
+    box(3.4, 2.0, 1.4, '#efe7d4', x, g, z - 0.8), gable(3.4, 1.1, 1.4, '#9b4630', x, g + 2.0, z - 0.8),
+    box(3.2, 1.5, 0.8, '#e8dfca', x, g, z + 2.6), box(0.8, 1.5, 3, '#e8dfca', x + 1.2, g, z + 1),
+    box(0.8, 1.5, 3, '#e8dfca', x - 1.2, g, z + 1),
+    gable(3.2, 0.7, 0.8, '#9b4630', x, g + 1.5, z + 2.6),
   ], 1615, Infinity, { grow: true });
 }
-// Synagogy
+// Synagogy: v nové židovské čtvrti (1619, zbořena kvůli železnici) a novorománská (1852–1853)
 {
-  const ox = -50, oz = 36;
+  const ox = -60, oz = -27;
   group([box(2, 1.4, 1.6, '#d8c9a8', ox, H(ox, oz) - 0.3, oz), gable(2, 0.9, 1.6, '#7a4a35', ox, H(ox, oz) + 1.1, oz)], 1619, 1850);
-  const x = -35, z = 48, g = H(x, z) - 0.3;
+  const x = -52, z = -24, g = H(x, z) - 0.3;
   group([
     box(3, 2.2, 2.2, '#d6c3a0', x, g, z), gable(3, 1, 2.2, '#5f5a55', x, g + 2.2, z),
     box(0.7, 3.2, 0.7, '#d6c3a0', x - 1.5, g, z + 1.1), box(0.7, 3.2, 0.7, '#d6c3a0', x - 1.5, g, z - 1.1),
     cone(0.5, 0.8, '#5f5a55', x - 1.5, g + 3.2, z + 1.1, 4, Math.PI / 4), cone(0.5, 0.8, '#5f5a55', x - 1.5, g + 3.2, z - 1.1, 4, Math.PI / 4),
   ], 1853);
 }
+// Židovské hřbitovy
+function cemetery(x, z, w, d, from) {
+  const g = H(x, z) - 0.2;
+  const parts = [
+    box(w, 0.5, 0.2, '#8f877a', x, g, z - d / 2), box(w, 0.5, 0.2, '#8f877a', x, g, z + d / 2),
+    box(0.2, 0.5, d, '#8f877a', x - w / 2, g, z), box(0.2, 0.5, d, '#8f877a', x + w / 2, g, z),
+  ];
+  for (let i = 0; i < 24; i++) parts.push(box(0.15, 0.35, 0.3, '#b5b0a5', x + rr(-w, w) * 0.42, g + 0.15, z + rr(-d, d) * 0.42));
+  group(parts, from);
+}
+cemetery(-90, -17, 6, 4, 1620);
+cemetery(-171, -19, 7, 5, 1890);
 // Nádraží a továrny
 {
-  const x = 0, z = 56, g = H(x, z) - 0.3;
-  group([box(8, 1.8, 2, '#e5d7bb', x, g, z), gable(8, 0.9, 2, '#6d4a3a', x, g + 1.8, z)], 1850);
-  for (const [cx, cz, from, to] of [[105, 64, 1872, Infinity], [140, 70, 1885, 1998], [172, 66, 1898, Infinity], [120, 76, 1910, 1995]]) {
+  const x = 14, z = -9, g = H(x, z) - 0.3;
+  group([box(6, 1.8, 1.8, '#e5d7bb', x, g, z, -0.12), gable(6, 0.9, 1.8, '#6d4a3a', x, g + 1.8, z, -0.12)], 1850);
+  for (const [cx, cz, from, to] of [[10, 72, 1872, Infinity], [-57, 53, 1885, 1998], [-72, 84, 1898, Infinity], [120, 5, 1905, 1995]]) {
     group([cyl(0.5, 7, '#8b4a32', cx, H(cx, cz) - 0.3, cz, 10)], from, to);
   }
 }
 // Kratochvílova rozhledna (1935)
 {
-  const [x, z] = HILL, g = H(x, z) - 0.2;
+  const x = -5, z = 40, g = H(x, z) - 0.2;
   group([box(1.1, 4.2, 1.1, '#cfc7b4', x, g, z), box(2, 0.3, 2, '#9a8f7c', x, g + 4.2, z), cone(1.3, 0.9, '#7a4a35', x, g + 4.5, z, 4, Math.PI / 4)], 1935);
 }
-// Rotunda sv. Jiří na Řípu (obnovena 1126)
+// Kaple sv. Vojtěcha na Řípu (pravděpodobně kolem 1039), roku 1126 opravena a rozšířena o západní věž
 {
   const [x, z] = RIP, g = H(x, z) - 0.3, s = '#d3c7ad';
   group([
     cyl(1.3, 2.2, s, x, g, z, 16), cone(1.5, 1.4, '#6e5e4a', x, g + 2.2, z, 16),
-    cyl(0.75, 1.5, s, x + 1.3, g, z, 12), box(1.2, 3.8, 1.2, s, x - 1.6, g, z),
-    cone(0.95, 1.2, '#6e5e4a', x - 1.6, g + 3.8, z, 4, Math.PI / 4),
-  ], 1126);
+    cyl(0.75, 1.5, s, x + 1.3, g, z, 12),
+  ], 1039);
+  group([cyl(0.75, 3.8, s, x - 1.7, g, z, 12), cone(0.9, 1.2, '#6e5e4a', x - 1.7, g + 3.8, z, 12)], 1126);
 }
 
 // Vlak (od roku 1850)
-const railPts = densify(RAIL, 1);
+const railPts = densify(TRAIN_PATH, 1);
 const railLen = [0];
 for (let i = 1; i < railPts.length; i++) {
   railLen.push(railLen[i - 1] + Math.hypot(railPts[i][0] - railPts[i - 1][0], railPts[i][1] - railPts[i - 1][1]));
@@ -1038,7 +1030,7 @@ const smokeTex = (() => {
 const smoke = [];
 for (let i = 0; i < 70; i++) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, transparent: true, depthWrite: false }));
-  s.userData = { x: rr(-25, 70), z: rr(-2, 45), phase: rand() };
+  s.userData = { x: rr(-55, 5), z: rr(-10, 30), phase: rand() };
   s.visible = false;
   scene.add(s);
   smoke.push(s);
@@ -1050,41 +1042,42 @@ const SMOKE_YEARS = [[1421, 1422.5], [1425, 1426], [1428, 1429], [1634, 1635.5],
 // ---------------------------------------------------------------------------
 
 const labelsEl = document.getElementById('labels');
+const bridgeMid = [bridgeAxis.ax + bridgeAxis.dx * (bridgeAxis.s0 + bridgeAxis.s1) / 2,
+  bridgeAxis.az + bridgeAxis.dz * (bridgeAxis.s0 + bridgeAxis.s1) / 2];
 const LABELS = [
-  { text: 'Labe', x: -170, z: riverZ(-170), y: 1, from: 0, far: 2000 },
-  { text: 'Říp', x: RIP[0], z: RIP[1], y: 6, from: 0, far: 2000 },
-  { text: 'Rotunda sv. Jiří', x: RIP[0], z: RIP[1], y: 5, from: 1126, far: 180 },
-  { text: 'Germánská osada', x: -28, z: 8, y: 2, from: 0, to: 460, far: 500 },
-  { text: 'Slovanská osada', x: -8, z: 6, y: 2, from: 610, to: 1220, far: 500 },
-  { text: 'Biskupský hrad', x: -14, z: -6, y: 6, from: 1189, to: 1577, far: 500 },
-  { text: 'Rožmberský hrad', x: -14, z: -6, y: 6, from: 1577, to: 1603, far: 500 },
-  { text: 'Lobkovický hrad', x: -14, z: -6, y: 6, from: 1603, to: 1652, far: 500 },
-  { text: 'Zámek Lobkoviců', x: -14, z: -6, y: 6, from: 1652, far: 600 },
-  { text: 'Kamenný most', x: 2, z: -24, y: 4, from: 1340, to: 1640, far: 500 },
-  { text: 'Zbytky gotického mostu', x: 2, z: -24, y: 4, from: 1640, to: 1906, far: 400 },
-  { text: 'Most přes Labe', x: 2, z: -24, y: 6, from: 1910, far: 500 },
-  { text: 'Augustiniánský klášter', x: 16, z: -7, y: 9, from: 1333, to: 1421, far: 400 },
-  { text: 'Kostel Narození P. Marie', x: 14, z: -7, y: 9, from: 1421, far: 300 },
-  { text: 'Náměstí', x: 6, z: 15, y: 2, from: 1250, far: 300 },
-  { text: 'Nové Město', x: 52, z: 20, y: 3, from: 1390, to: 1900, far: 300 },
-  { text: 'Hláska', x: 10, z: 44, y: 8.5, from: 1475, far: 300 },
-  { text: 'Kapucínský klášter', x: -36, z: 30, y: 4, from: 1615, far: 250 },
-  { text: 'Synagoga', x: -50, z: 36, y: 3, from: 1619, to: 1850, far: 250 },
-  { text: 'Synagoga', x: -35, z: 48, y: 4.5, from: 1853, far: 250 },
-  { text: 'Nádraží', x: 0, z: 56, y: 3.5, from: 1850, far: 400 },
-  { text: 'Továrny', x: 140, z: 70, y: 8, from: 1872, far: 450 },
-  { text: 'Vilová čtvrť', x: -105, z: 80, y: 3, from: 1925, far: 400 },
-  { text: 'Sídliště', x: 160, z: 125, y: 6, from: 1970, far: 500 },
-  { text: 'Sídliště', x: -168, z: 170, y: 6, from: 1980, far: 500 },
-  { text: 'Kratochvílova rozhledna', x: HILL[0], z: HILL[1], y: 6, from: 1935, far: 500 },
-  { text: 'Podlusky', x: -152, z: -16, y: 3, from: 1250, far: 600 },
-  { text: 'Hracholusky', x: 30, z: 196, y: 3, from: 1250, far: 600 },
-  { text: 'Obchvat', x: -60, z: 268, y: 2, from: 2021, far: 700 },
-  { text: 'Trať do Zlonic', x: -115, z: 237, y: 2, from: 1900, far: 600 },
+  { text: 'Labe', x: -122, z: -96, y: 1, from: 0, far: 2000 },
+  { text: 'Labe', x: 190, z: -250, y: 1, from: 0, far: 2000 },
+  { text: 'Říp', x: RIP[0], z: RIP[1], y: 8, from: 0, far: 2500 },
+  { text: 'Kaple sv. Vojtěcha', x: RIP[0], z: RIP[1], y: 5, from: 1039, to: 1126, far: 220 },
+  { text: 'Rotunda sv. Jiří', x: RIP[0], z: RIP[1], y: 6, from: 1126, far: 220 },
+  { text: 'Germánská osada', x: -30, z: 2, y: 2, from: 0, to: 460, far: 500 },
+  { text: 'Slovanská osada', x: -14, z: 8, y: 2, from: 610, to: 1220, far: 500 },
+  { text: 'Biskupský hrad', x: CASTLE[0], z: CASTLE[1], y: 6, from: 1189, to: 1577, far: 500 },
+  { text: 'Rožmberský hrad', x: CASTLE[0], z: CASTLE[1], y: 6, from: 1577, to: 1603, far: 500 },
+  { text: 'Lobkovický hrad', x: CASTLE[0], z: CASTLE[1], y: 6, from: 1603, to: 1652, far: 500 },
+  { text: 'Zámek Lobkoviců', x: CASTLE[0], z: CASTLE[1], y: 6, from: 1652, far: 600 },
+  { text: 'Kamenný most', x: bridgeMid[0], z: bridgeMid[1], y: 4, from: 1340, to: 1640, far: 500 },
+  { text: 'Zbytky gotického mostu', x: bridgeMid[0], z: bridgeMid[1], y: 4, from: 1640, to: 1906, far: 400 },
+  { text: 'Most přes Labe', x: bridgeMid[0], z: bridgeMid[1], y: 6, from: 1910, far: 500 },
+  { text: 'Augustiniánský klášter', x: -35, z: -14, y: 9, from: 1333, to: 1421, far: 400 },
+  { text: 'Kostel Narození P. Marie', x: -35, z: -14, y: 9, from: 1421, far: 300 },
+  { text: 'Náměstí', x: SQUARE[0], z: SQUARE[1], y: 3, from: 1250, far: 300 },
+  { text: 'Hláska', x: -18, z: -4, y: 8.5, from: 1475, far: 300 },
+  { text: 'Kapucínský klášter', x: 14, z: 3, y: 4, from: 1615, far: 250 },
+  { text: 'Synagoga', x: -60, z: -27, y: 3, from: 1619, to: 1850, far: 250 },
+  { text: 'Synagoga', x: -52, z: -24, y: 4.5, from: 1853, far: 250 },
+  { text: 'Starý židovský hřbitov', x: -90, z: -17, y: 2, from: 1620, far: 220 },
+  { text: 'Nový židovský hřbitov', x: -171, z: -19, y: 2, from: 1890, far: 250 },
+  { text: 'Nádraží', x: 14, z: -9, y: 3.5, from: 1850, far: 400 },
+  { text: 'Kratochvílova rozhledna', x: -5, z: 40, y: 6.5, from: 1935, far: 400 },
+  { text: 'Obchvat', x: -160, z: 146, y: 2, from: 2021, far: 800 },
+  { text: 'Trať do Zlonic', x: -93, z: 116, y: 2, from: 1900, far: 600 },
+  ...VILLAGES.map(([text, x, z, , from]) => ({ text, x, z, y: 3, from, far: 900, village: true })),
+  ...FAR_VILLAGES.map(([text, x, z]) => ({ text, x, z, y: 3, from: 1250, far: 1300, village: true })),
 ];
 for (const l of LABELS) {
   l.el = document.createElement('div');
-  l.el.className = 'label';
+  l.el.className = l.village ? 'label village' : 'label';
   l.el.textContent = l.text;
   labelsEl.appendChild(l.el);
   l.pos = new THREE.Vector3(l.x, height(l.x, l.z) + l.y, l.z);
@@ -1147,6 +1140,7 @@ for (const t of timed) {
   pivot.add(g);
   t.obj = pivot;
 }
+
 
 // ---------------------------------------------------------------------------
 // UI: časová osa, karta události, počet obyvatel
