@@ -31,8 +31,19 @@ Stránku lze nasadit i na GitHub Pages bez dalšího sestavování.
 - `js/data.js` – historické události, období a vývoj počtu obyvatel (snadno rozšiřitelné)
 - `js/geo.js` – tok Labe, železnice, silnice a půdorysy budov z OpenStreetMap (generovaný soubor)
 - `js/main.js` – 3D scéna (terén, zástavba podle období, památky, okolní obce) a ovládání
+- `js/real.js` – skutečný 3D povrch z dat ČÚZK (lidar + ortofoto)
+- `data/real/` – připravené výškové mřížky, letecké snímky a výšky budov (generované soubory)
 - `tools/build_geo.py` – skript, který z OSM API stáhne data a vygeneruje `js/geo.js`
   (`python3 tools/build_geo.py`)
+- `tools/build_real.py` – skript, který ze služeb ČÚZK stáhne DMR 5G, DMP 1G a ortofoto a vygeneruje `data/real/`
+  (`python3 tools/build_real.py`, vyžaduje numpy a Pillow; spouštět po `build_geo.py`)
+
+## Skutečný 3D model
+
+Pro současnost (od roku 2013) stránka ukazuje skutečný povrch města: terén z digitálního modelu reliéfu DMR 5G,
+budovy a stromy z digitálního modelu povrchu DMP 1G (letecké laserové skenování 2009–2013) a barvy z ortofotomapy
+ČÚZK (© ČÚZK, CC BY 4.0). Přepínačem „Skutečný 3D model“ lze porovnat se schematickou rekonstrukcí. Terén pro
+historická období je také skutečný (DMR 5G), stejně jako výšky dnešních budov.
 
 ## Poznámka k přesnosti
 

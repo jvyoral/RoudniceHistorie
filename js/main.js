@@ -6,6 +6,7 @@ import {
   populationAt, eraAt,
 } from './data.js';
 import { RIVER, BUILDINGS, STREETS, RAILS } from './geo.js';
+import { loadRealData, buildRealMeshes } from './real.js';
 
 // ---------------------------------------------------------------------------
 // Pomocné funkce
@@ -156,26 +157,29 @@ function riverSD(x, z) {
   return lerp(lerp(sdGrid[k], sdGrid[k + 1], u), lerp(sdGrid[k + SD_N], sdGrid[k + SD_N + 1], u), v);
 }
 
+// Skutečný terén z DMR 5G (ČÚZK). Výšky jsou mírně převýšené kvůli čitelnosti.
+const REAL = await loadRealData();
+const VEX = 1.25;           // převýšení
+const ELEV0 = 147;          // nadmořská výška odpovídající y = 0 (hladina Labe pod jezem)
+const toY = (elev) => (elev - ELEV0) / 10 * VEX;
 function height(x, z) {
-  const sd = riverSD(x, z);
-  const n = fbm(x * 0.012, z * 0.012);
-  let h;
-  if (sd > RIVER_W) { // niva uvnitř labského oblouku
-    const dd = sd - RIVER_W;
-    h = 0.4 + Math.min(dd * 0.004, 2.5) + (n - 0.5) * 5 * smoothstep(40, 300, dd) + smoothstep(200, 600, dd) * 6 * n;
-  } else if (sd >= -RIVER_W) {
-    const t = sd / RIVER_W;
-    h = -1.6 * (1 - t * t) - 0.1;
-  } else { // levý břeh se skalní terasou pod zámkem
-    const dd = -sd - RIVER_W;
-    const cliff = 1.0 + 2.8 * Math.exp(-((x - CASTLE[0]) ** 2 + (z - CASTLE[1]) ** 2) / (2 * 110 * 110));
-    h = 0.4 + cliff * smoothstep(0, 7, dd) + Math.min(dd * 0.01, 3) +
-      (n - 0.5) * 8 * smoothstep(40, 300, dd) + smoothstep(150, 600, dd) * 6 * n;
-  }
-  h += (fbm(x * 0.05 + 100, z * 0.05) - 0.5) * 0.3 * smoothstep(0, 10, Math.abs(sd) - RIVER_W);
-  const r = Math.hypot(x - RIP[0], z - RIP[1]);
-  h += 38 * Math.exp(-Math.pow(r / 50, 2.2));
-  return h;
+  return toY(REAL.elevation(x, z));
+}
+// Hladina Labe v bodech osy řeky (z lidarových dat), pro libovolné místo podle nejbližšího bodu.
+const RIVER_LEVEL = REAL.meta.riverLevel.map((e, i) => {
+  const [x, z] = RIVER_PTS[i];
+  return Math.abs(x) < 790 && Math.abs(z) < 790 ? e : null;
+});
+for (let i = 0; i < RIVER_LEVEL.length; i++) {
+  if (RIVER_LEVEL[i] === null) RIVER_LEVEL[i] = RIVER_LEVEL.find((v) => v !== null);
+}
+function waterY(x, z) {
+  let best = Infinity, lv = RIVER_LEVEL[0];
+  RIVER_PTS.forEach(([px, pz], i) => {
+    const d = (px - x) ** 2 + (pz - z) ** 2;
+    if (d < best) { best = d; lv = RIVER_LEVEL[i]; }
+  });
+  return toY(lv);
 }
 
 // ---------------------------------------------------------------------------
@@ -252,15 +256,41 @@ const terrain = new THREE.Mesh(terrainGeo, new THREE.MeshLambertMaterial({ verte
 terrain.receiveShadow = true;
 scene.add(terrain);
 
-// --- voda ----------------------------------------------------------------
-
-const water = new THREE.Mesh(
-  new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE),
-  new THREE.MeshPhongMaterial({ color: 0x46778f, shininess: 90, specular: 0x88aacc, transparent: true, opacity: 0.88 }),
-);
-water.rotation.x = -Math.PI / 2;
-water.receiveShadow = true;
-scene.add(water);
+// --- voda: pás podél osy Labe ve výšce skutečné hladiny; terén nad hladinou ho zakryje ---
+// Úzký pás = koryto, široký pás se zobrazí jen při povodni.
+function riverSheet(W, color, opacity) {
+  const pos = [], idx = [];
+  const pts = RIVER_PTS.map((p, i) => [...p, toY(RIVER_LEVEL[i]) + 0.06]);
+  const dense = [];
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, az, ay] = pts[i - 1], [bx, bz, by] = pts[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 3));
+    for (let k = 0; k < n; k++) dense.push([lerp(ax, bx, k / n), lerp(az, bz, k / n), lerp(ay, by, k / n)]);
+  }
+  dense.forEach(([x, z, y], i) => {
+    const a = dense[Math.max(0, i - 1)], b = dense[Math.min(dense.length - 1, i + 1)];
+    let tx = b[0] - a[0], tz = b[1] - a[1];
+    const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+    pos.push(x - tz * W, y, z + tx * W, x + tz * W, y, z - tx * W);
+    if (i > 0) { const k = (i - 1) * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, new THREE.MeshPhongMaterial({
+    color, shininess: 90, specular: 0x88aacc, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
+  }));
+  m.receiveShadow = true;
+  m.frustumCulled = false;
+  scene.add(m);
+  return m;
+}
+const water = riverSheet(24, 0x46778f, 1);
+water.material.transparent = false;
+water.material.depthWrite = true;
+const floodWater = riverSheet(170, 0x6b7a66, 0.92);
+floodWater.visible = false;
 
 // ---------------------------------------------------------------------------
 // Barvy krajiny podle období
@@ -490,83 +520,20 @@ function hipGeometry() {
   return g;
 }
 
-// Okna, sokl a římsa se kreslí shaderem podle světových souřadnic – bez další geometrie.
-// aWin = (výška soklu, výška římsy, styl oken, –); styl 0 = bez oken.
-function facadeMaterial() {
-  const m = new THREE.MeshLambertMaterial();
-  m.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', `#include <common>
-        attribute vec4 aWin;
-        varying vec4 vWin; varying vec3 vWPos; varying vec3 vWNorm; varying vec2 vCenter;`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-        mat4 wm = modelMatrix * instanceMatrix;
-        vWPos = (wm * vec4(transformed, 1.0)).xyz;
-        vWNorm = normalize(mat3(wm) * objectNormal);
-        vCenter = (wm * vec4(0.0, 0.0, 0.0, 1.0)).xz;
-        vWin = aWin;`);
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>
-        varying vec4 vWin; varying vec3 vWPos; varying vec3 vWNorm; varying vec2 vCenter;`)
-      .replace('#include <color_fragment>', `#include <color_fragment>
-        vec3 fn = normalize(vWNorm);
-        float st = vWin.z;
-        if (abs(fn.y) < 0.4 && st > 0.5) {
-          vec2 tg = normalize(vec2(-fn.z, fn.x));
-          float u = dot(vWPos.xz - vCenter, tg);
-          float v = vWPos.y - vWin.x;
-          float hh = vWin.y - vWin.x;
-          float sp = st < 1.5 ? 0.34 : st < 2.5 ? 0.4 : st < 3.5 ? 0.5 : st < 4.5 ? 0.75 : 0.5;
-          float fh = (st > 3.5 && st < 4.5) ? max(hh, 0.45) : 0.39;
-          float ww = st < 1.5 ? 0.17 : (st > 2.5 && st < 3.5) ? 0.4 : 0.21;
-          float wx = fract(u / sp + 0.5);
-          float wy = fract(v / fh);
-          float win = step(0.5 - ww, wx) * step(wx, 0.5 + ww) * step(0.3, wy) * step(wy, 0.76)
-            * step(0.2, v) * step(v, hh - 0.1);
-          if (st > 5.5) win = max(win, step(0.06, v) * step(v, 0.34) * step(0.08, fract(u / 1.3)));
-          diffuseColor.rgb *= mix(0.72, 1.0, step(0.12, v));          // sokl
-          diffuseColor.rgb *= 1.0 - 0.18 * step(hh - 0.05, v);        // římsa
-          if (st > 2.5 && st < 3.5) diffuseColor.rgb *= 1.0 - 0.1 * step(0.86, wy); // panelové spáry
-          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.15, 0.19, 0.24), win * 0.85);
-        }`);
-  };
-  return m;
-}
-// Na šikmých střechách jemné řady tašek.
-function roofMaterial() {
-  const m = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
-  m.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vRPos; varying float vRN;')
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-        mat4 rwm = modelMatrix * instanceMatrix;
-        vRPos = (rwm * vec4(transformed, 1.0)).xyz;
-        vRN = normalize(mat3(rwm) * objectNormal).y;`);
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vRPos; varying float vRN;')
-      .replace('#include <color_fragment>', `#include <color_fragment>
-        if (abs(vRN) < 0.97) diffuseColor.rgb *= 1.0 - 0.13 * step(0.55, fract(vRPos.y * 13.0));`);
-  };
-  return m;
-}
-
 const bodyGeo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
 const roofGeo = prismGeometry();
 const NB = buildings.length;
-const winAttr = new THREE.InstancedBufferAttribute(new Float32Array(NB * 4), 4);
-bodyGeo.setAttribute('aWin', winAttr);
-const bodies = new THREE.InstancedMesh(bodyGeo, facadeMaterial(), NB);
-const roofs = new THREE.InstancedMesh(roofGeo, roofMaterial(), NB);
-const hips = new THREE.InstancedMesh(hipGeometry(), roofMaterial(), NB);
+const bodies = new THREE.InstancedMesh(bodyGeo, new THREE.MeshLambertMaterial(), NB);
+const roofs = new THREE.InstancedMesh(roofGeo, new THREE.MeshLambertMaterial({ side: THREE.DoubleSide }), NB);
+const hips = new THREE.InstancedMesh(hipGeometry(), new THREE.MeshLambertMaterial({ side: THREE.DoubleSide }), NB);
 const HIP_TYPES = new Set(['villa', 'modern', 'civic']);
-const WIN_STYLE = { house: 1, rural: 1, tenement: 2, villa: 2, modern: 2, civic: 2, panel: 3, hall: 4, farm: 0, shop: 6, garage: 0, hut: 0 };
 for (const m of [bodies, roofs, hips]) {
   m.castShadow = true; m.receiveShadow = true;
   m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   m.frustumCulled = false;
   scene.add(m);
 }
-const B_HEIGHT = 1.3; // budovy mírně převýšené kvůli čitelnosti
+const B_HEIGHT = VEX; // stejné převýšení jako terén
 for (const b of buildings) {
   let g = Infinity;
   const c = Math.cos(b.rot), s = Math.sin(b.rot);
@@ -577,23 +544,16 @@ for (const b of buildings) {
   b.y = g - 0.3;
   b.seed = rand();
 }
-// Komíny na obytných domech
-const CHIMNEY_TYPES = { house: 1, tenement: 2, villa: 1, rural: 1, modern: 0.5, civic: 1 };
-const chimneyList = [];
-buildings.forEach((b, i) => {
-  const n = CHIMNEY_TYPES[b.type] ?? 0;
-  const count = n >= 1 ? n : (rand() < n ? 1 : 0);
-  b.ch = [];
-  for (let k = 0; k < count; k++) {
-    b.ch.push(chimneyList.length);
-    chimneyList.push({ i, lx: rr(-0.35, 0.35) * b.w, lz: rr(-0.18, 0.18) * b.d });
-  }
-  winAttr.setXYZW(i, b.y + 0.3, b.y + 0.3 + b.h * B_HEIGHT, WIN_STYLE[b.type] ?? 0, 0);
-});
-const chimneys = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0),
-  new THREE.MeshLambertMaterial({ color: 0x7a4a3a }), chimneyList.length);
-chimneys.castShadow = true; chimneys.frustumCulled = false;
-scene.add(chimneys);
+// Skutečné výšky okapu a hřebene z lidaru (DMP 1G − DMR 5G) pro budovy z OSM.
+for (let i = 0; i < BUILDINGS.length / 7; i++) {
+  const eave = REAL.buildingHeights[i * 2] / 100, ridge = REAL.buildingHeights[i * 2 + 1] / 100;
+  if (!ridge) continue;
+  const b = buildings[i];
+  b.h = eave / 10;
+  const r = (ridge - eave) / 10;
+  b.rh = r < 0.12 ? 0.02 : Math.min(r, b.d * 0.7);
+  b.real = true;
+}
 
 const PAL = {
   hut: { walls: ['#7a5c3e', '#6b4f35', '#86664a'], roofs: ['#a58d55', '#9a8450', '#b09a62'] },
@@ -662,11 +622,12 @@ function updateBuildings(year) {
       bodies.setMatrixAt(i, ZERO);
       roofs.setMatrixAt(i, ZERO);
       hips.setMatrixAt(i, ZERO);
-      for (const c of b.ch) chimneys.setMatrixAt(c, ZERO);
       continue;
     }
     const grow = clamp((year - b.start) / 3, 0.08, 1);
-    const h = b.h * B_HEIGHT * grow + 0.3;
+    // dnešní výšky; staré měšťanské domy a statky byly do 19. století nižší
+    const bh = year < 1800 && (b.type === 'house' || b.type === 'rural') ? Math.min(b.h, 0.8) : b.h;
+    const h = bh * B_HEIGHT * grow + 0.3;
     dummy.position.set(b.x, b.y, b.z);
     dummy.rotation.set(0, b.rot, 0);
     dummy.scale.set(b.w, h, b.d);
@@ -679,23 +640,12 @@ function updateBuildings(year) {
     const hip = HIP_TYPES.has(b.type);
     (hip ? hips : roofs).setMatrixAt(i, dummy.matrix);
     (hip ? roofs : hips).setMatrixAt(i, ZERO);
-    if (b.ch.length) {
-      const c = Math.cos(b.rot), sn = Math.sin(b.rot);
-      for (const ci of b.ch) {
-        const { lx, lz } = chimneyList[ci];
-        dummy.position.set(b.x + lx * c + lz * sn, b.y + h + rh * 0.35, b.z - lx * sn + lz * c);
-        dummy.scale.set(0.16, rh * 0.65 + 0.3 * grow, 0.16);
-        dummy.updateMatrix();
-        chimneys.setMatrixAt(ci, grow < 1 ? ZERO : dummy.matrix);
-      }
-    }
     const gi = gridIndex(b.x, b.z);
     if (gi >= 0) density[gi] += (b.w * b.d) / (GRID_CELL * GRID_CELL) * 1.6;
   }
   bodies.instanceMatrix.needsUpdate = true;
   roofs.instanceMatrix.needsUpdate = true;
   hips.instanceMatrix.needsUpdate = true;
-  chimneys.instanceMatrix.needsUpdate = true;
   // rozmazání mřížky hustoty
   densityTmp.set(density);
   for (let j = 1; j < GRID_N - 1; j++) {
@@ -882,36 +832,6 @@ function matDS(color) {
   if (!MAT[key]) MAT[key] = new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide });
   return MAT[key];
 }
-// Fasáda památky s okny (stejný princip jako u domů, parametry jako uniformy).
-function facadeMat(color, base, top, spacing = 0.42) {
-  const m = new THREE.MeshLambertMaterial({ color });
-  m.onBeforeCompile = (sh) => {
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos; varying vec3 vWNorm; varying vec2 vCenter;')
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-        vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-        vWNorm = normalize(mat3(modelMatrix) * objectNormal);
-        vCenter = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xz;`);
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>
-        varying vec3 vWPos; varying vec3 vWNorm; varying vec2 vCenter;`)
-      .replace('#include <color_fragment>', `#include <color_fragment>
-        vec3 fn = normalize(vWNorm);
-        if (abs(fn.y) < 0.4) {
-          vec2 tg = normalize(vec2(-fn.z, fn.x));
-          float u = dot(vWPos.xz - vCenter, tg);
-          float v = vWPos.y - ${base.toFixed(3)};
-          float hh = ${(top - base).toFixed(3)};
-          float wx = fract(u / ${spacing.toFixed(3)} + 0.5);
-          float wy = fract(v / 0.62);
-          float win = step(0.33, wx) * step(wx, 0.67) * step(0.25, wy) * step(wy, 0.8) * step(0.25, v) * step(v, hh - 0.15);
-          diffuseColor.rgb *= mix(0.75, 1.0, step(0.18, v));
-          diffuseColor.rgb *= 1.0 - 0.15 * step(hh - 0.08, v);
-          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.16, 0.2, 0.25), win * 0.85);
-        }`);
-  };
-  return m;
-}
 function gable(w, h, d, color, x, y, z, rotY = 0) {
   const m = new THREE.Mesh(roofGeo, matDS(color));
   m.scale.set(w, h, d);
@@ -947,11 +867,9 @@ const H = (x, z) => height(x, z);
 {
   const [cx, cz] = CASTLE, g = H(cx, cz) - 0.3, wall = '#efe6cf', roof = '#55565a';
   const wings = [[0, -3.4, 11, 2.2], [0, 3.4, 11, 2.2], [-4.4, 0, 2.2, 4.6], [4.4, 0, 2.2, 4.6]];
-  const castleFacade = facadeMat(wall, g, g + 2.9, 0.5);
   wings.forEach(([ox, oz, w, d], i) => {
     const along = w > d;
     const body = box(w, 2.9, d, wall, cx + ox, g, cz + oz);
-    body.material = castleFacade;
     group([
       body,
       gable(along ? w : d, 1.3, along ? d : w, roof, cx + ox, g + 2.9, cz + oz, along ? 0 : Math.PI / 2),
@@ -985,6 +903,8 @@ const bridgeAxis = (() => {
   }
   return { ax, az, dx, dz, s0, s1, rot: Math.atan2(-dz, dx) };
 })();
+const bridgeMid0 = [bridgeAxis.ax + bridgeAxis.dx * (bridgeAxis.s0 + bridgeAxis.s1) / 2,
+  bridgeAxis.az + bridgeAxis.dz * (bridgeAxis.s0 + bridgeAxis.s1) / 2];
 function bridgeGroup() {
   const g = new THREE.Group();
   g.position.set(bridgeAxis.ax, 0, bridgeAxis.az);
@@ -1006,7 +926,8 @@ function ramp(parent, sFrom, yFrom, length, width, color) {
 {
   const parent = bridgeGroup();
   const { s0, s1 } = bridgeAxis;
-  const n = 9, L = (s1 - s0) / n, top = 2.6, bottom = -2.2, stone = '#a89e8a';
+  const wy = waterY(bridgeMid0[0], bridgeMid0[1]);
+  const n = 9, L = (s1 - s0) / n, top = wy + 1.6, bottom = wy - 2.2, stone = '#a89e8a';
   for (let i = 0; i < n; i++) {
     // pole mostu s klenutým otvorem (obrys bez děr, aby triangulace byla spolehlivá)
     const r = (L - 0.8) / 2, spring = 0.3;
@@ -1030,7 +951,7 @@ function ramp(parent, sFrom, yFrom, length, width, color) {
 {
   const parent = bridgeGroup();
   const { s0, s1 } = bridgeAxis;
-  const deckY = 3.0, steel = '#3f6656';
+  const deckY = waterY(bridgeMid0[0], bridgeMid0[1]) + 1.9, steel = '#3f6656';
   const parts = [box(s1 - s0 + 2, 0.35, 1.3, '#6b6b6b', (s0 + s1) / 2, deckY - 0.35, 0), ramp(parent, s1 + 1, deckY, 9, 1.3, '#6b6b6b')];
   const mid = (s0 + s1) / 2;
   for (const [a, b] of [[s0, mid], [mid, s1]]) {
@@ -1047,7 +968,7 @@ function ramp(parent, sFrom, yFrom, length, width, color) {
       }
     }
   }
-  for (const s of [s0, mid, s1]) parts.push(box(1.0, deckY + 2, 1.6, '#9a948a', s, -2, 0));
+  for (const s of [s0, mid, s1]) parts.push(box(1.0, 4, 1.6, '#9a948a', s, deckY - 4, 0));
   group(parts, 1910, Infinity, {}, parent);
 }
 // Hradby (konec 14. století – 19. století)
@@ -1121,7 +1042,6 @@ const FACTORY_CHIMNEYS = [[10, 72, 1872, Infinity], [-57, 53, 1885, 1998], [-72,
 {
   const x = 14, z = -9, g = H(x, z) - 0.3;
   const st = box(6, 1.8, 1.8, '#e5d7bb', x, g, z, -0.12);
-  st.material = facadeMat('#e5d7bb', g, g + 1.8);
   group([st, gable(6, 0.9, 1.8, '#6d4a3a', x, g + 1.8, z, -0.12)], 1850);
   for (const [cx, cz, from, to] of FACTORY_CHIMNEYS) {
     group([cyl(0.5, 7, '#8b4a32', cx, H(cx, cz) - 0.3, cz, 10)], from, to);
@@ -1192,42 +1112,11 @@ function inVillageCore(x, z, mult = 1.6) {
 }
 const townDist = (x, z) => Math.hypot(x - SQUARE[0], z - SQUARE[1]);
 
-// Pouliční lampy: v centru od roku 1890, jinde od 1930 (nebo od vzniku ulice).
-const lampItems = [];
-const parkedItems = [];
 const CAR_COLORS = ['#b23a32', '#2f5d8a', '#e8e4da', '#3b3b3b', '#7a8a3a', '#c9a13a', '#8a8f96', '#264a3a', '#d26a2a'].map(col);
-for (const s of STREETS) {
-  if (!['r', 't', 'p', 'h'].includes(s.c)) continue;
-  const pts = pairs(s.p);
-  const mid = pts[Math.floor(pts.length / 2)];
-  const dT = townDist(mid[0], mid[1]);
-  if (dT > 260 && !inVillageCore(mid[0], mid[1], 2.4)) continue;
-  const sy = streetYear(s.c, mid[0], mid[1]);
-  const half = STREET_W[s.c] / 2;
-  for (const off of [half + 0.35, -half - 0.35]) {
-    for (const [x, z] of alongLine(pts, 8.4, off)) {
-      lampItems.push({ x, z, rot: 0, s: 1, from: Math.max(sy, dT < 120 ? 1890 : 1930) });
-    }
-  }
-  if (s.c === 'r' && dT < 240) {
-    for (const [x, z, a] of alongLine(pts, 2.4, (half + 0.12) * (rand() < 0.5 ? 1 : -1))) {
-      if (rand() > 0.45) continue;
-      parkedItems.push({
-        x, z, rot: a, s: 1, from: Math.max(sy, 1950 + rand() * 72), color: CAR_COLORS[Math.floor(rand() * CAR_COLORS.length)],
-      });
-    }
-  }
-}
-const lampGeo = mergeGeometries([
-  new THREE.CylinderGeometry(0.03, 0.04, 0.8, 5).translate(0, 0.4, 0),
-  new THREE.SphereGeometry(0.08, 6, 4).translate(0, 0.84, 0),
-]);
-makeProps(lampGeo, new THREE.MeshLambertMaterial({ color: 0x3a3f44, emissive: 0x2a2410 }), lampItems, false);
 const carGeo = mergeGeometries([
   new THREE.BoxGeometry(0.46, 0.13, 0.21).translate(0, 0.1, 0),
   new THREE.BoxGeometry(0.25, 0.11, 0.19).translate(-0.02, 0.22, 0),
 ]);
-makeProps(carGeo, new THREE.MeshLambertMaterial(), parkedItems);
 
 // Stromy na zahradách vil, rodinných domů a statků
 const gardenItems = [];
@@ -1332,7 +1221,7 @@ const boats = [];
   const pts = densify(RIVER_PTS, 1);
   const len = [0];
   for (let i = 1; i < pts.length; i++) len.push(len[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
-  boats.path = { pts, len, L: len[len.length - 1] };
+  boats.path = { pts, len, L: len[len.length - 1], ys: pts.map(([x, z]) => waterY(x, z)) };
   const geo = mergeGeometries([
     new THREE.BoxGeometry(2.6, 0.3, 0.75).translate(0, 0.15, 0),
     new THREE.BoxGeometry(0.8, 0.35, 0.55).translate(-0.6, 0.47, 0),
@@ -1357,7 +1246,7 @@ function animateBoats(dt, year) {
     const [ax, az] = p.pts[lo], [bx, bz] = p.pts[hi];
     let dx = bx - ax, dz = bz - az;
     const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
-    dummy.position.set(lerp(ax, bx, f) - dz * b.off, water.position.y + 0.02, lerp(az, bz, f) + dx * b.off);
+    dummy.position.set(lerp(ax, bx, f) - dz * b.off, p.ys[lo] - 0.02, lerp(az, bz, f) + dx * b.off);
     dummy.rotation.set(0, Math.atan2(-dz, dx), 0);
     dummy.scale.set(1, year < 1841 ? 0.5 : 1, 1);
     dummy.updateMatrix();
@@ -1504,6 +1393,46 @@ function updateLabels(year) {
 }
 
 // ---------------------------------------------------------------------------
+// Rekonstrukce × skutečnost: od roku 2013 lze zobrazit skutečný 3D povrch (lidar + ortofoto ČÚZK)
+// ---------------------------------------------------------------------------
+
+const REAL_FROM = 2013;
+const KEEP = new Set([water, floodWater, train, traffic.mesh, boats.mesh, sun, sun.target, ...smoke, ...factorySmoke]);
+const recon = new THREE.Group();
+for (const o of scene.children.slice()) if (!KEEP.has(o) && !o.isLight) recon.add(o);
+scene.add(recon);
+const realState = { on: true, group: null, progress: 0, failed: false };
+const realToggle = document.getElementById('real-toggle');
+const realInput = realToggle.querySelector('input');
+const realNote = document.getElementById('real-note');
+realInput.addEventListener('change', () => { realState.on = realInput.checked; applyYear(state.year, true); });
+buildRealMeshes(REAL.meta, toY, renderer, (p) => { realState.progress = p; updateRealUI(state.year); })
+  .then((g) => {
+    realState.group = g;
+    scene.add(g);
+    applyYear(state.year, true);
+  })
+  .catch((e) => {
+    console.warn('Skutečný 3D model se nepodařilo načíst', e);
+    realState.failed = true;
+    updateRealUI(state.year);
+  });
+function realActive(year) {
+  return realState.on && !!realState.group && year >= REAL_FROM;
+}
+function updateRealUI(year) {
+  realToggle.hidden = year < REAL_FROM || realState.failed;
+  if (!realState.group) {
+    realNote.textContent = realState.failed ? '' : `Načítám skutečný 3D model… ${Math.round(realState.progress * 100)} %`;
+  } else {
+    realNote.textContent = realState.on
+      ? 'Letecké snímky ČÚZK, výšky budov a stromů z lidaru 2009–2013'
+      : 'Rekonstrukce (schematické budovy podle půdorysů OSM)';
+  }
+  realNote.hidden = year < REAL_FROM || realState.failed;
+}
+
+// ---------------------------------------------------------------------------
 // Aplikace roku na scénu
 // ---------------------------------------------------------------------------
 
@@ -1511,6 +1440,11 @@ let terrainYear = -9999;
 let propsYear = null;
 let lastTerrainTime = 0;
 function applyYear(year, force = false) {
+  const real = realActive(year);
+  recon.visible = !real;
+  water.visible = !real; // ve skutečném modelu je řeka přímo na leteckém snímku
+  if (realState.group) realState.group.visible = real;
+  updateRealUI(year);
   updateBuildings(year);
   colorBuildings(year);
   for (const t of timed) {
@@ -1541,9 +1475,8 @@ for (const t of timed) {
   g.traverse((o) => { if (o.isMesh) minY = Math.min(minY, o.position.y); });
   const pivot = new THREE.Group();
   pivot.position.y = minY;
-  scene.add(pivot);
+  g.parent.add(pivot);
   g.children.slice().forEach((c) => { c.position.y -= minY; pivot.add(c); });
-  scene.remove(g);
   pivot.add(g);
   t.obj = pivot;
 }
@@ -1766,8 +1699,8 @@ function frame() {
   // voda – povodně 2002 a 2013
   const y = state.year;
   const flood = (y >= 2002 && y < 2003) || (y >= 2013 && y < 2014) ? 0.95 : 0;
-  water.position.y += (flood - water.position.y) * Math.min(1, dt * 2);
-  water.material.color.setHex(flood ? 0x5f7f86 : 0x46778f);
+  floodWater.position.y += (flood - floodWater.position.y) * Math.min(1, dt * 2);
+  floodWater.visible = floodWater.position.y > 0.05;
 
   animateTraffic(dt, y);
   animateBoats(dt, y);

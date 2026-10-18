@@ -249,3 +249,14 @@ kbd {
 @media (max-width: 700px) {
   #attribution { bottom: 144px; }
 }
+
+#real-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+#real-toggle[hidden], #real-note[hidden] { display: none; }
+#real-note { font-size: 11px; max-width: 220px; margin-top: 2px; }

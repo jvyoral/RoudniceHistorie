@@ -373,4 +373,6 @@ export const SOURCES = [
   ['Dobříň – Wikipedie', 'https://cs.wikipedia.org/wiki/Dob%C5%99%C3%AD%C5%88'],
   ['Vědomice – Wikipedie', 'https://cs.wikipedia.org/wiki/V%C4%9Bdomice'],
   ['Mapová data © přispěvatelé OpenStreetMap (ODbL)', 'https://www.openstreetmap.org/copyright'],
+  ['ČÚZK – Ortofotomapa ČR (© ČÚZK, CC BY 4.0)', 'https://geoportal.cuzk.cz/'],
+  ['ČÚZK – Digitální model reliéfu DMR 5G a model povrchu DMP 1G (© ČÚZK, CC BY 4.0)', 'https://geoportal.cuzk.cz/'],
 ];

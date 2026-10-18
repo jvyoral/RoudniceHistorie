@@ -23,6 +23,8 @@
     <h1>Roudnice nad Labem</h1>
     <div id="year-big">2026</div>
     <div id="era">Současnost</div>
+    <label id="real-toggle" hidden><input type="checkbox" checked> Skutečný 3D model</label>
+    <div id="real-note" class="muted" hidden></div>
   </header>
 
   <aside id="population" aria-live="polite">
@@ -46,7 +48,11 @@
       <p>Interaktivní model území dnešní Roudnice nad Labem s Řípem v pozadí. Posouvejte časovou osu,
         klikněte na značku události nebo spusťte přehrávání. Scénou otáčíte myší (levé tlačítko),
         posouváte pravým tlačítkem a přibližujete kolečkem.</p>
-      <p><b>Upozornění:</b> tok Labe, železnice, silnice a půdorysy dnešních budov pocházejí z OpenStreetMap.
+      <p><b>Skutečný 3D model</b> (od roku 2013) je postaven přímo z dat ČÚZK: terén z digitálního modelu reliéfu DMR 5G,
+        budovy a stromy z digitálního modelu povrchu DMP 1G (letecké laserové skenování 2009–2013) a barvy z aktuální
+        ortofotomapy. Budovy postavené po roce 2013 proto mohou být ploché. Výšky jsou 1,25× převýšené.</p>
+      <p><b>Upozornění:</b> tok Labe, železnice, silnice a půdorysy dnešních budov pocházejí z OpenStreetMap,
+        terén a výšky budov z lidaru ČÚZK.
         Doba vzniku jednotlivých domů je však jen <em>odhadnutá</em> podle polohy (staré město, předměstí,
         vilové čtvrti, sídliště…), stejně jako podoba zaniklých staveb. Počty obyvatel před rokem 1869 jsou odhady,
         od roku 1869 vycházejí ze sčítání lidu.</p>
@@ -81,7 +87,7 @@
     </div>
   </footer>
 
-  <a id="attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">Mapová data © přispěvatelé OpenStreetMap</a>
+  <a id="attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">Mapová data © přispěvatelé OpenStreetMap · ortofoto a výškopis © ČÚZK</a>
   <div id="loading">Načítám krajinu…</div>
   <script type="module" src="js/main.js"></script>
 </body>
