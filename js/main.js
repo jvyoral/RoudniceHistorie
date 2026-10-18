@@ -908,6 +908,7 @@ const bridgeMid0 = [bridgeAxis.ax + bridgeAxis.dx * (bridgeAxis.s0 + bridgeAxis.
   bridgeAxis.az + bridgeAxis.dz * (bridgeAxis.s0 + bridgeAxis.s1) / 2];
 function bridgeGroup() {
   const g = new THREE.Group();
+  g.userData.keepReal = true; // mosty v lidarovém terénu chybějí, zobrazujeme je i ve skutečném modelu
   g.position.set(bridgeAxis.ax, 0, bridgeAxis.az);
   g.rotation.y = bridgeAxis.rot;
   scene.add(g);
@@ -1400,7 +1401,7 @@ function updateLabels(year) {
 const REAL_FROM = 2013;
 const KEEP = new Set([water, floodWater, train, traffic.mesh, boats.mesh, sun, sun.target, ...smoke, ...factorySmoke]);
 const recon = new THREE.Group();
-for (const o of scene.children.slice()) if (!KEEP.has(o) && !o.isLight) recon.add(o);
+for (const o of scene.children.slice()) if (!KEEP.has(o) && !o.isLight && !o.userData.keepReal) recon.add(o);
 scene.add(recon);
 const realState = { on: true, group: null, progress: 0, failed: false };
 const realToggle = document.getElementById('real-toggle');

@@ -6,8 +6,7 @@
   - Ortofoto ČR (Web Mercator).
 
 Výstup do data/real/:
-  far_dmr.bin, mid_dmr.bin            – terén (Uint16, decimetry nad 100 m n. m.)
-  mid_dmp.bin, core_dmp.bin           – povrch s budovami a stromy (Uint16, decimetry nad 100 m)
+  far_dmr.bin, mid_dmr.bin, core_dmr.bin – terén (Uint16, decimetry nad 100 m n. m.)
   far_orto.jpg, mid_orto.jpg, core_orto.jpg – letecké snímky
   bheights.bin                        – pro každou budovu z js/geo.js výška okapu a hřebene (Uint16, cm)
   meta.json                           – rozsahy dlaždic, rozměry mřížek a hladina Labe
@@ -39,8 +38,8 @@ OUT = os.path.join(ROOT, 'data', 'real')
 # rect = (x0, z0, x1, z1) v jednotkách scény; grid = (sloupce, řádky)
 TILES = {
     'far': {'rect': (-800, -800, 800, 800), 'dmr': (640, 640), 'orto': (4096, 4096)},
-    'mid': {'rect': (-320, -300, 320, 260), 'dmr': (640, 560), 'dmp': (800, 700), 'orto': (4096, 3584)},
-    'core': {'rect': (-120, -110, 120, 130), 'dmp': (960, 960), 'orto': (4096, 4096)},
+    'mid': {'rect': (-320, -300, 320, 260), 'dmr': (640, 560), 'orto': (4096, 3584)},
+    'core': {'rect': (-120, -110, 120, 130), 'dmr': (960, 960), 'orto': (4096, 4096)},
 }
 # Jemná data jen pro výpočet výšek budov (nepublikují se).
 ANALYSIS = {'rect': (-440, -280, 310, 290), 'grid': (3750, 2850)}
