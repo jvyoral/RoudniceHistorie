@@ -375,4 +375,5 @@ export const SOURCES = [
   ['Mapová data © přispěvatelé OpenStreetMap (ODbL)', 'https://www.openstreetmap.org/copyright'],
   ['ČÚZK – Ortofotomapa ČR (© ČÚZK, CC BY 4.0)', 'https://geoportal.cuzk.cz/'],
   ['ČÚZK – Digitální model reliéfu DMR 5G a model povrchu DMP 1G (© ČÚZK, CC BY 4.0)', 'https://geoportal.cuzk.cz/'],
+  ['II. a III. vojenské mapování – Virtuální mapová sbírka Chartae Antiquae (© VÚGTK, v.v.i.)', 'https://www.chartae-antiquae.cz/'],
 ];

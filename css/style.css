@@ -250,7 +250,7 @@ kbd {
   #attribution { bottom: 144px; }
 }
 
-#real-toggle {
+#real-toggle, #hist-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -258,5 +258,5 @@ kbd {
   font-size: 13px;
   cursor: pointer;
 }
-#real-toggle[hidden], #real-note[hidden] { display: none; }
-#real-note { font-size: 11px; max-width: 220px; margin-top: 2px; }
+#real-toggle[hidden], #real-note[hidden], #hist-toggle[hidden], #hist-note[hidden] { display: none; }
+#real-note, #hist-note { font-size: 11px; max-width: 220px; margin-top: 2px; }

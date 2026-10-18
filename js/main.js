@@ -7,6 +7,7 @@ import {
 } from './data.js';
 import { RIVER, BUILDINGS, STREETS, RAILS } from './geo.js';
 import { loadRealData, buildRealMeshes } from './real.js';
+import { OVERLAYS, buildOverlay } from './hist.js';
 
 // ---------------------------------------------------------------------------
 // Pomocné funkce
@@ -1433,6 +1434,60 @@ function updateRealUI(year) {
 }
 
 // ---------------------------------------------------------------------------
+// Dobové mapy položené na terén (načítají se až při prvním zobrazení daného období)
+// ---------------------------------------------------------------------------
+
+const OVERLAY_RECT = [-250, -220, 250, 220];
+const histState = { on: true, loaded: {}, loading: {}, progress: {}, failed: {} };
+const histToggle = document.getElementById('hist-toggle');
+const histInput = histToggle.querySelector('input');
+const histNote = document.getElementById('hist-note');
+const attribution = document.getElementById('attribution');
+const ATTR_BASE = attribution.textContent;
+histInput.addEventListener('change', () => { histState.on = histInput.checked; applyYear(state.year, true); });
+function overlayFor(year) {
+  return OVERLAYS.find((o) => year >= o.from && year < o.to) ?? null;
+}
+function ensureOverlay(ov) {
+  if (histState.loaded[ov.id] || histState.loading[ov.id] || histState.failed[ov.id]) return;
+  histState.loading[ov.id] = true;
+  buildOverlay(ov, OVERLAY_RECT, height, (p) => { histState.progress[ov.id] = p; updateHistUI(state.year); })
+    .then((mesh) => {
+      histState.loaded[ov.id] = mesh;
+      mesh.visible = false;
+      recon.add(mesh);
+      applyYear(state.year, true);
+    })
+    .catch((e) => {
+      console.warn('Dobovou mapu se nepodařilo načíst', ov.id, e);
+      histState.failed[ov.id] = true;
+      updateHistUI(state.year);
+    })
+    .finally(() => { histState.loading[ov.id] = false; });
+}
+function updateHistUI(year) {
+  const ov = overlayFor(year);
+  const show = !!ov && !realActive(year);
+  histToggle.hidden = !show;
+  histNote.hidden = !show;
+  if (show) {
+    histNote.textContent = histState.failed[ov.id] ? 'Mapu se nepodařilo načíst'
+      : histState.loaded[ov.id] ? ov.name
+        : `Načítám mapu… ${Math.round((histState.progress[ov.id] ?? 0) * 100)} %`;
+  }
+  attribution.textContent = show && histState.on ? `${ATTR_BASE} · ${ov.credit}` : ATTR_BASE;
+}
+function applyOverlays(year) {
+  const ov = !realActive(year) && histState.on ? overlayFor(year) : null;
+  if (ov) ensureOverlay(ov);
+  for (const o of OVERLAYS) {
+    const m = histState.loaded[o.id];
+    if (m) m.visible = !!ov && ov.id === o.id;
+  }
+  updateHistUI(year);
+}
+
+// ---------------------------------------------------------------------------
 // Aplikace roku na scénu
 // ---------------------------------------------------------------------------
 
@@ -1445,6 +1500,7 @@ function applyYear(year, force = false) {
   water.visible = !real; // ve skutečném modelu je řeka přímo na leteckém snímku
   if (realState.group) realState.group.visible = real;
   updateRealUI(year);
+  applyOverlays(year);
   updateBuildings(year);
   colorBuildings(year);
   for (const t of timed) {

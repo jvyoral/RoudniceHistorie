@@ -32,6 +32,7 @@ Stránku lze nasadit i na GitHub Pages bez dalšího sestavování.
 - `js/geo.js` – tok Labe, železnice, silnice a půdorysy budov z OpenStreetMap (generovaný soubor)
 - `js/main.js` – 3D scéna (terén, zástavba podle období, památky, okolní obce) a ovládání
 - `js/real.js` – skutečný 3D povrch z dat ČÚZK (lidar + ortofoto)
+- `js/hist.js` – dobové mapy (vojenská mapování) položené na terén
 - `data/real/` – připravené výškové mřížky, letecké snímky a výšky budov (generované soubory)
 - `tools/build_geo.py` – skript, který z OSM API stáhne data a vygeneruje `js/geo.js`
   (`python3 tools/build_geo.py`)
@@ -44,6 +45,12 @@ Pro současnost (od roku 2013) stránka ukazuje skutečný povrch města: terén
 budovy a stromy z digitálního modelu povrchu DMP 1G (letecké laserové skenování 2009–2013) a barvy z ortofotomapy
 ČÚZK (© ČÚZK, CC BY 4.0). Přepínačem „Skutečný 3D model“ lze porovnat se schematickou rekonstrukcí. Terén pro
 historická období je také skutečný (DMR 5G), stejně jako výšky dnešních budov.
+
+## Dobové mapy
+
+Pro roky 1842–1876 se na terén pokládá 2. vojenské mapování (1842–1852) a pro roky 1877–1952 3. vojenské mapování
+(1877–1880). Dlaždice se načítají za běhu z Virtuální mapové sbírky Chartae Antiquae (© VÚGTK, v.v.i.,
+https://www.chartae-antiquae.cz/), do repozitáře se nekopírují (`js/hist.js`).
 
 ## Poznámka k přesnosti
 
