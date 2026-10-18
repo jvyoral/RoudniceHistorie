@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Roudnice v čase</title>
+  <meta name="description" content="Interaktivní 3D vizualizace historického vývoje města Roudnice nad Labem od roku 0 do roku 2026.">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="scene"></div>
+  <div id="labels"></div>
+
+  <header id="title">
+    <h1>Roudnice nad Labem</h1>
+    <div id="year-big">2026</div>
+    <div id="era">Současnost</div>
+  </header>
+
+  <aside id="population" aria-live="polite">
+    <div class="pop-label">Počet obyvatel <span class="muted">(orientačně)</span></div>
+    <div id="pop-value">12 650</div>
+    <svg id="pop-spark" viewBox="0 0 200 44" preserveAspectRatio="none" aria-hidden="true"></svg>
+    <div id="pop-note" class="muted">sčítání lidu / ČSÚ</div>
+  </aside>
+
+  <article id="event-card" hidden>
+    <div class="ev-meta"><span id="ev-cat"></span> · <span id="ev-year"></span></div>
+    <h2 id="ev-title"></h2>
+    <p id="ev-text"></p>
+  </article>
+
+  <button id="info-btn" title="O projektu a zdroje" aria-label="O projektu a zdroje">i</button>
+  <div id="info" hidden>
+    <div class="info-inner">
+      <button id="info-close" aria-label="Zavřít">×</button>
+      <h2>Roudnice v čase</h2>
+      <p>Interaktivní model území dnešní Roudnice nad Labem s Řípem v pozadí. Posouvejte časovou osu,
+        klikněte na značku události nebo spusťte přehrávání. Scénou otáčíte myší (levé tlačítko),
+        posouváte pravým tlačítkem a přibližujete kolečkem.</p>
+      <p><b>Upozornění:</b> model je schematický. Polohy staveb odpovídají skutečnosti jen přibližně,
+        zástavba je generovaná podle období. Počty obyvatel před rokem 1869 jsou odhady,
+        od roku 1869 vycházejí ze sčítání lidu.</p>
+      <h3>Zdroje</h3>
+      <ul id="sources"></ul>
+      <h3>Ovládání</h3>
+      <p><kbd>Mezerník</kbd> přehrát/pozastavit · <kbd>←</kbd> <kbd>→</kbd> ±1 rok (se <kbd>Shift</kbd> ±10) ·
+        <kbd>PgUp</kbd> <kbd>PgDn</kbd> předchozí/další událost</p>
+    </div>
+  </div>
+
+  <footer id="timeline">
+    <div class="tl-controls">
+      <button id="btn-prev" title="Předchozí událost" aria-label="Předchozí událost">⏮</button>
+      <button id="btn-play" title="Přehrát" aria-label="Přehrát">▶</button>
+      <button id="btn-next" title="Další událost" aria-label="Další událost">⏭</button>
+      <select id="speed" title="Rychlost přehrávání" aria-label="Rychlost přehrávání">
+        <option value="0.5">0,5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="5">5×</option>
+      </select>
+    </div>
+    <div id="track-wrap">
+      <div id="track">
+        <div id="track-fill"></div>
+        <div id="markers"></div>
+        <div id="handle" role="slider" tabindex="0" aria-label="Rok" aria-valuemin="0" aria-valuemax="2026"></div>
+      </div>
+      <div id="ticks"></div>
+      <div id="tooltip" hidden></div>
+    </div>
+  </footer>
+
+  <div id="loading">Načítám krajinu…</div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
