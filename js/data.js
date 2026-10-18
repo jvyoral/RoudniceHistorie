@@ -120,6 +120,13 @@ export const EVENTS = [
     focus: [-22, 5, 110],
   },
   {
+    year: 1432, cat: 'valka',
+    title: 'Velká povodeň',
+    text: 'Podle Merianovy Topographie (1650) způsobilo Labe roku 1432 městu velké škody.',
+    focus: [-20, -30, 160],
+    link: ['Topographia Bohemiae (1650), heslo Raudnitz', 'https://de.wikisource.org/wiki/Topographia_Bohemiae,_Moraviae_et_Silesiae:_Raudnitz'],
+  },
+  {
     year: 1431, cat: 'panstvi',
     title: 'Smiřičtí',
     text: 'Roudnici drží Jan Smiřický; arcibiskupové o panství definitivně přicházejí.',
@@ -130,6 +137,13 @@ export const EVENTS = [
     title: 'Zdeněk Konopišťský ze Šternberka',
     text: 'Panství přechází na mocného Zdeňka Konopišťského ze Šternberka.',
     focus: [-1.5, -3.5, 90],
+  },
+  {
+    year: 1466, cat: 'valka',
+    title: 'Jiří z Poděbrad dobývá město',
+    text: 'Král Jiří z Poděbrad nechává Roudnici dobýt a vypálit (podle Merianovy Topographie, 1650).',
+    focus: [-22, 5, 110],
+    link: ['Topographia Bohemiae (1650), heslo Raudnitz', 'https://de.wikisource.org/wiki/Topographia_Bohemiae,_Moraviae_et_Silesiae:_Raudnitz'],
   },
   {
     year: 1467, cat: 'panstvi',
@@ -174,6 +188,13 @@ export const EVENTS = [
     focus: [-60, -24, 60],
   },
   {
+    year: 1631, cat: 'valka',
+    title: 'Saská vojska',
+    text: 'Za třicetileté války město dobývají a plení Sasové (Merianova Topographie, 1650).',
+    focus: [-20, 5, 120],
+    link: ['Topographia Bohemiae (1650), heslo Raudnitz', 'https://de.wikisource.org/wiki/Topographia_Bohemiae,_Moraviae_et_Silesiae:_Raudnitz'],
+  },
+  {
     year: 1634, cat: 'valka',
     title: 'Třicetiletá válka',
     text: 'Švédská vojska město vypalují. Kamenný most je po válce poničen a postupně chátrá.',
@@ -182,8 +203,16 @@ export const EVENTS = [
   {
     year: 1639, cat: 'valka',
     title: 'Švédové znovu',
-    text: 'Další vypálení a zpustošení města švédskými vojsky.',
+    text: 'Švédský polní maršál Johan Banér město dobývá; následujícího roku se vrací pod českou korunu.',
+    link: ['Topographia Bohemiae (1650), heslo Raudnitz', 'https://de.wikisource.org/wiki/Topographia_Bohemiae,_Moraviae_et_Silesiae:_Raudnitz'],
     focus: [-20, 5, 120],
+  },
+  {
+    year: 1645, cat: 'valka',
+    title: 'Švédové potřetí',
+    text: 'Švédská vojska opět obsazují město a plení klášter v Doksanech (Merianova Topographie, 1650).',
+    focus: [-20, 5, 120],
+    link: ['Topographia Bohemiae (1650), heslo Raudnitz', 'https://de.wikisource.org/wiki/Topographia_Bohemiae,_Moraviae_et_Silesiae:_Raudnitz'],
   },
   {
     year: 1652, label: '1652–1684', cat: 'stavba',
@@ -196,6 +225,7 @@ export const EVENTS = [
     title: 'Železnice Praha – Drážďany',
     text: 'Severní státní dráha z Prahy do Lovosic (dál na Podmokly a Drážďany) je slavnostně otevřena 4. 5. 1850. Stavba si vyžádala zbourání části centra, pivovaru i staré synagogy.',
     focus: [14, -12, 150],
+    link: ['Dobové fotografie – Historická Roudnice nad Labem', 'https://historicka.roudnice.eu/fotografie.php'],
   },
   {
     year: 1853, label: '1852–1853', cat: 'kultura',
@@ -208,6 +238,7 @@ export const EVENTS = [
     title: 'Průmyslové centrum Podřipska',
     text: 'Podél železnice vyrůstají strojírenské továrny (mj. firma Bratři Klementové). Město se rozrůstá na jih k nádraží.',
     focus: [0, 50, 160],
+    link: ['Dobové fotografie – Historická Roudnice nad Labem', 'https://historicka.roudnice.eu/fotografie.php'],
   },
   {
     year: 1890, cat: 'kultura',
@@ -226,6 +257,7 @@ export const EVENTS = [
     title: 'Železný most',
     text: 'Na místě zbořených zbytků gotického mostu vzniká nový železný most přes Labe. Téhož roku odkazem sbírky vzniká Galerie moderního umění – třetí nejstarší galerie v Česku.',
     focus: [-2, -34, 70],
+    link: ['Dobové fotografie – Historická Roudnice nad Labem', 'https://historicka.roudnice.eu/fotografie.php'],
   },
   {
     year: 1924, label: 'první republika', cat: 'osidleni',
@@ -238,6 +270,7 @@ export const EVENTS = [
     title: 'Kratochvílova rozhledna',
     text: 'Rolnická záložna podřipská staví v jižní části města Kratochvílovu rozhlednu.',
     focus: [-5, 40, 60],
+    link: ['Dobové fotografie – Historická Roudnice nad Labem', 'https://historicka.roudnice.eu/fotografie.php'],
   },
   {
     year: 1939, label: '1939–1945', cat: 'valka',
@@ -268,6 +301,7 @@ export const EVENTS = [
     title: 'Panelová sídliště',
     text: 'Výstavba panelových sídlišť. V srpnu 1986 dosahuje město historického maxima 14 067 obyvatel; v letech 1986–1990 je k Roudnici připojen i Dobříň.',
     focus: [-30, 100, 260],
+    link: ['Dobové fotografie – Historická Roudnice nad Labem', 'https://historicka.roudnice.eu/fotografie.php'],
   },
   {
     year: 2002, cat: 'valka',
@@ -373,6 +407,8 @@ export const SOURCES = [
   ['Dobříň – Wikipedie', 'https://cs.wikipedia.org/wiki/Dob%C5%99%C3%AD%C5%88'],
   ['Vědomice – Wikipedie', 'https://cs.wikipedia.org/wiki/V%C4%9Bdomice'],
   ['Mapová data © přispěvatelé OpenStreetMap (ODbL)', 'https://www.openstreetmap.org/copyright'],
+  ['M. Zeiller, M. Merian: Topographia Bohemiae, Moraviae et Silesiae (1650), heslo Raudnitz – Wikisource', 'https://de.wikisource.org/wiki/Topographia_Bohemiae,_Moraviae_et_Silesiae:_Raudnitz'],
+  ['Historická Roudnice nad Labem – dobové fotografie (© M. Ševčík; podklad pro tvar mostu, kostela a rozhledny)', 'https://historicka.roudnice.eu/'],
   ['ČÚZK – Ortofotomapa ČR (© ČÚZK, CC BY 4.0)', 'https://geoportal.cuzk.cz/'],
   ['ČÚZK – Digitální model reliéfu DMR 5G a model povrchu DMP 1G (© ČÚZK, CC BY 4.0)', 'https://geoportal.cuzk.cz/'],
   ['II. a III. vojenské mapování – Virtuální mapová sbírka Chartae Antiquae (© VÚGTK, v.v.i.)', 'https://www.chartae-antiquae.cz/'],

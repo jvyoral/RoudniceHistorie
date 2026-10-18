@@ -117,6 +117,10 @@ def main():
     dmp = br.raster(br.DMP, ar, br.ANALYSIS['grid'], os.path.join(real_cache, 'analysis_dmp.tif'))
     dmr = br.raster(br.DMR, ar, br.ANALYSIS['grid'], os.path.join(real_cache, 'analysis_dmr.tif'))
     tiles = {k: br.TILES[k]['rect'] for k in ('core', 'mid')}
+    # pro plochy střech vyhlazený povrch (lidarový šum ±0,4 m by dělal hrbolky)
+    pad = np.pad(dmp, 1, mode='edge')
+    dmp_s = sum(pad[1 + dy:1 + dy + dmp.shape[0], 1 + dx:1 + dx + dmp.shape[1]]
+                for dy in (-1, 0, 1) for dx in (-1, 0, 1)) / 9.0
     S = lambda a, x, z: br.sample(a, ar, np.asarray(x, float), np.asarray(z, float))  # noqa: E731
 
     blds = load_buildings(osm_cache)
@@ -151,6 +155,12 @@ def main():
             bring.append(np.full(len(p), ri))
         bp = np.concatenate(bpts)
         bn = np.concatenate(bnorm)
+        # normály musí mířit do budovy – ověříme testem bodu kousek vedle obrysu a případně otočíme
+        probe = bp + bn * 0.05
+        inb = point_in_ring(probe[:, 0], probe[:, 1], outer)
+        for r in b['inner']:
+            inb &= ~point_in_ring(probe[:, 0], probe[:, 1], r)
+        bn[~inb] *= -1
         # vnitřní body střechy
         gx = np.arange(min(xs) + STEP_GRID / 2, max(xs), STEP_GRID)
         gz = np.arange(min(zs) + STEP_GRID / 2, max(zs), STEP_GRID)
@@ -177,7 +187,7 @@ def main():
         for j, f in enumerate(first):
             if f >= 0:
                 eaveSamples[j] = prof[min(f + 2, len(INSETS) - 1), j] if f + 2 < len(INSETS) else prof[f:, j].max()
-        interior = S(dmp, ip[:, 0], ip[:, 1]) if len(ip) else np.zeros(0)
+        interior = S(dmp_s, ip[:, 0], ip[:, 1]) if len(ip) else np.zeros(0)
         allr = np.concatenate([eaveSamples, interior]) - (base + 0.5)
         if np.percentile(allr, 80) < 2.0:
             # budova chybí v lidaru (postavena po roce 2013) – plochá střecha podle podlaží
@@ -283,7 +293,13 @@ def main():
 
     # stromy: lokální maxima normalizovaného povrchu mimo budovy
     ndsm = dmp - dmr
-    veg = (ndsm > 3.0) & ~mask
+    # budovy rozšířené o 4 m (obrysy z OSM nejsou s lidarem přesně sesazené)
+    grown = mask.copy()
+    for _ in range(2):
+        g2 = grown.copy()
+        g2[1:] |= grown[:-1]; g2[:-1] |= grown[1:]; g2[:, 1:] |= grown[:, :-1]; g2[:, :-1] |= grown[:, 1:]
+        grown = g2
+    veg = (ndsm > 3.0) & ~grown
     from numpy.lib.stride_tricks import sliding_window_view as swv
     pad = np.pad(np.where(veg, ndsm, 0), 2)
     mx = swv(pad, (5, 5)).max(axis=(2, 3))
@@ -301,6 +317,12 @@ def main():
     inmid = (x > mr[0]) & (x < mr[2]) & (z > mr[1]) & (z < mr[3])
     c = orto[oj, oi]
     c[~inmid] = (70, 95, 55)
+    # jen místa, která jsou na ortofotu zelená nebo ve stínu (ne střechy a ulice)
+    green = (c[:, 1] >= c[:, 0] * 0.92) & (c[:, 1] >= c[:, 2] * 0.95)
+    dark = c.sum(axis=1) < 150
+    ok = green | dark | ~inmid
+    x, z, h, g, c = x[ok], z[ok], h[ok], g[ok], c[ok]
+    c = np.where(dark[ok][:, None] & ~green[ok][:, None], (c * 0.6 + np.array([60, 80, 45]) * 0.4), c)
     rec = np.zeros(len(x), dtype=[('x', '<f4'), ('z', '<f4'), ('g', '<f4'), ('h', '<f4'), ('c', 'u1', 3), ('p', 'u1')])
     rec['x'], rec['z'], rec['g'], rec['h'], rec['c'] = x, z, g, h, np.clip(c, 0, 255).astype(np.uint8)
     rec.tofile(os.path.join(OUT, 'trees.bin'))

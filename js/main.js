@@ -442,10 +442,33 @@ const HEIGHTS = {
   rural: [0.55, 0.7, 0.55], farm: [0.6, 0.85, 0.6], garage: [0.25, 0.3, 0.03], hall: [0.9, 1.4, 0.25],
   shop: [0.7, 0.9, 0.03], civic: [1.2, 1.8, 0.4], panel: [2.4, 3.6, 0.03], hut: [0.3, 0.45, 0.6],
 };
+// Stáří zástavby podle dobových map (tools/build_hist.py): bit 0 = zakresleno na 2. vojenském
+// mapování (1842–1852), bit 1 = na 3. vojenském mapování (1877–1880).
+const HIST_FLAGS = await fetch('data/hist_flags.bin')
+  .then((r) => (r.ok ? r.arrayBuffer() : null)).then((b) => (b ? new Uint8Array(b) : null)).catch(() => null);
+function applyMapEvidence(c, flags, x, z, kind) {
+  if (flags === undefined || kind === 'gar' || c.type === 'garage') return c;
+  const r = rand();
+  const inVillage = VILLAGES.some(([, vx, vz, vr]) => Math.hypot(x - vx, z - vz) < vr * 2.4);
+  if (flags & 1) { // stálo už kolem roku 1845
+    if (c.start <= 1842) return c;
+    return { type: c.type === 'hall' ? 'hall' : inVillage ? 'rural' : 'house', start: 1650 + r * 190, end: c.end };
+  }
+  if (flags & 2) { // přibylo mezi oběma mapováními
+    const type = c.type === 'hall' || c.type === 'civic' ? c.type : inVillage ? 'rural' : 'tenement';
+    return { type, start: 1843 + r * 34, end: c.end };
+  }
+  if (c.start < 1880) { // na žádné z map není – vzniklo až po roce 1880
+    const dTown = Math.hypot(x - SQUARE[0], z - SQUARE[1]);
+    const type = c.type === 'hall' ? 'hall' : inVillage ? 'rural' : dTown < 110 ? 'tenement' : 'villa';
+    return { type, start: 1880 + r * 45, end: c.end };
+  }
+  return c;
+}
 for (let i = 0; i < BUILDINGS.length; i += 7) {
   const [x, z, w, d, ang, levels, k] = BUILDINGS.slice(i, i + 7);
   const kind = KINDS[k];
-  const c = classify(x, z, kind, levels, w, d);
+  const c = applyMapEvidence(classify(x, z, kind, levels, w, d), HIST_FLAGS?.[i / 7], x, z, kind);
   const [h0, h1, roof] = HEIGHTS[c.type];
   let h = rr(h0, h1);
   if (levels > 0 && c.type !== 'garage') h = levels * 0.3 + 0.15;
@@ -603,7 +626,7 @@ function colorBuildings(year) {
 }
 
 // Války: část domů postavených před pohromou je na několik let vypálená.
-const FIRES = [[1421, 1426], [1425, 1428], [1428, 1433], [1634, 1638], [1639, 1646]];
+const FIRES = [[1421, 1426], [1425, 1428], [1428, 1433], [1466, 1470], [1631, 1634], [1634, 1638], [1639, 1644], [1645, 1650]];
 function burned(b, year) {
   for (const [a, e] of FIRES) {
     if (year >= a && year < e && b.start < a && b.x > -85 && b.x < 20 && b.z < 40 && b.z > -35) {
@@ -881,9 +904,13 @@ const H = (x, z) => height(x, z);
 {
   const cx = -35, cz = -14, g = H(cx, cz) - 0.2, stone = '#d9cfb8', roof = '#7b4a36';
   group([
-    box(5.2, 2.6, 2.3, stone, cx, g, cz), gable(5.2, 1.8, 2.3, roof, cx, g + 2.6, cz),
-    box(2, 2.2, 1.9, stone, cx + 3.5, g, cz), gable(2, 1.4, 1.9, roof, cx + 3.5, g + 2.2, cz),
-    box(1.4, 6, 1.4, stone, cx - 3.2, g, cz), cone(1.05, 2.2, '#4f4a45', cx - 3.2, g + 6, cz, 4, Math.PI / 4),
+    box(5.2, 2.0, 2.3, stone, cx, g, cz), gable(5.2, 1.3, 2.3, roof, cx, g + 2.0, cz),
+    box(2, 1.8, 1.9, stone, cx + 3.5, g, cz), gable(2, 1.1, 1.9, roof, cx + 3.5, g + 1.8, cz),
+    // průčelí se dvěma věžemi s vysokými jehlancovými střechami (dobové fotografie)
+    box(1.0, 2.2, 3.0, stone, cx - 3.0, g, cz),
+    box(1.0, 1.4, 1.0, stone, cx - 3.0, g + 2.2, cz - 0.95), box(1.0, 1.4, 1.0, stone, cx - 3.0, g + 2.2, cz + 0.95),
+    cone(0.72, 2.1, '#3d3f45', cx - 3.0, g + 3.6, cz - 0.95, 4, Math.PI / 4),
+    cone(0.72, 2.1, '#3d3f45', cx - 3.0, g + 3.6, cz + 0.95, 4, Math.PI / 4),
   ], 1333, Infinity, { grow: true });
   group([
     box(5, 1.8, 1.6, '#cfc4ab', cx, g, cz + 3.4), gable(5, 1, 1.6, roof, cx, g + 1.8, cz + 3.4),
@@ -949,28 +976,36 @@ function ramp(parent, sFrom, yFrom, length, width, color) {
   }
   group([ramp(parent, s1, top, 8, 1.0, stone)], 1340, 1640, {}, parent);
 }
-// Železný most (1906–1910)
+// Železný most (1906–1910): příhradová ocelová pole na kamenných pilířích a kamenná mostní brána
+// s průjezdem na městském břehu (podle dobových fotografií ze stavby mostu)
 {
   const parent = bridgeGroup();
   const { s0, s1 } = bridgeAxis;
-  const deckY = waterY(bridgeMid0[0], bridgeMid0[1]) + 1.9, steel = '#3f6656';
-  const parts = [box(s1 - s0 + 2, 0.35, 1.3, '#6b6b6b', (s0 + s1) / 2, deckY - 0.35, 0), ramp(parent, s1 + 1, deckY, 9, 1.3, '#6b6b6b')];
-  const mid = (s0 + s1) / 2;
-  for (const [a, b] of [[s0, mid], [mid, s1]]) {
-    for (const side of [-0.6, 0.6]) {
-      const pts = [];
-      for (let k = 0; k <= 16; k++) {
-        const t = k / 16;
-        pts.push(new THREE.Vector3(lerp(a, b, t), deckY + Math.sin(t * Math.PI) * 2.0, side));
-      }
-      parts.push(mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.12, 6), steel, 0, 0, 0));
-      for (let k = 1; k < 8; k++) {
-        const t = k / 8;
-        parts.push(box(0.08, Math.sin(t * Math.PI) * 2.0, 0.08, steel, lerp(a, b, t), deckY, side));
+  const deckY = waterY(bridgeMid0[0], bridgeMid0[1]) + 1.9, steel = '#3a4a46', stone = '#b9b2a4';
+  const parts = [box(s1 - s0 + 2, 0.3, 1.2, '#6b6b6b', (s0 + s1) / 2, deckY - 0.3, 0), ramp(parent, s1 + 1, deckY, 9, 1.2, '#6b6b6b')];
+  const n = 3, L = (s1 - s0) / n, th = 0.8;
+  for (let k = 0; k < n; k++) {
+    const a = s0 + k * L, b = a + L;
+    for (const side of [-0.62, 0.62]) {
+      parts.push(box(L, 0.1, 0.1, steel, (a + b) / 2, deckY, side), box(L, 0.1, 0.1, steel, (a + b) / 2, deckY + th, side));
+      const m = 8;
+      for (let q = 0; q < m; q++) {
+        const xa = a + (q / m) * L, xb = a + ((q + 1) / m) * L;
+        parts.push(box(0.07, th, 0.07, steel, xa, deckY, side));
+        const diag = mesh(new THREE.BoxGeometry(Math.hypot(xb - xa, th), 0.06, 0.06), steel, (xa + xb) / 2, deckY + th / 2, side);
+        diag.rotation.z = (q % 2 ? -1 : 1) * Math.atan2(th, xb - xa);
+        parts.push(diag);
       }
     }
+    for (let q = 0; q <= 8; q++) parts.push(box(0.07, 0.07, 1.3, steel, a + (q / 8) * L, deckY + th, 0));
   }
-  for (const s of [s0, mid, s1]) parts.push(box(1.0, 4, 1.6, '#9a948a', s, deckY - 4, 0));
+  for (let k = 0; k <= n; k++) parts.push(box(1.0, 3.5, 1.7, stone, s0 + k * L, deckY - 3.6, 0));
+  // mostní brána na městském břehu
+  const gx = s0 - 1.2;
+  parts.push(
+    box(1.6, deckY + 1.6, 0.55, stone, gx, -1, -0.85), box(1.6, deckY + 1.6, 0.55, stone, gx, -1, 0.85),
+    box(1.6, 0.6, 2.25, stone, gx, deckY + 0.6, 0), box(1.8, 0.2, 2.45, '#9c9488', gx, deckY + 1.2, 0),
+  );
   group(parts, 1910, Infinity, {}, parent);
 }
 // Hradby (konec 14. století – 19. století)
@@ -995,15 +1030,15 @@ function ramp(parent, sFrom, yFrom, length, width, color) {
     group([box(2, 2.8, 2, stone, x, H(x, z) - 0.3, z), gable(2, 1, 2, '#6d5a42', x, H(x, z) + 2.5, z)], 1395, 1860);
   }
 }
-// Hláska (15. století), od baroka s cibulovitou střechou
+// Hláska (15. století), od baroka s jehlancovou střechou a lucernou
 {
   const x = -18, z = -4, g = H(x, z) - 0.3;
   group([box(2, 5.5, 2, '#cbbfa6', x, g, z)], 1475, Infinity, { grow: true });
   group([cone(1.5, 2.2, '#5d4a3a', x, g + 5.5, z, 4, Math.PI / 4)], 1475, 1700);
   group([
-    cyl(1.15, 0.4, '#3f4a44', x, g + 5.5, z, 10),
-    mesh(new THREE.SphereGeometry(0.8, 12, 10), '#3f4a44', x, g + 6.5, z),
-    cone(0.35, 1.5, '#3f4a44', x, g + 7, z, 8),
+    cone(1.5, 1.4, '#3f4a44', x, g + 5.5, z, 4, Math.PI / 4),
+    box(0.6, 0.6, 0.6, '#cbbfa6', x, g + 6.6, z),
+    cone(0.45, 1.1, '#3f4a44', x, g + 7.2, z, 4, Math.PI / 4),
   ], 1700);
 }
 // Kapucínský klášter s kostelem sv. Václava (1615–1628) u zámku
@@ -1049,10 +1084,23 @@ const FACTORY_CHIMNEYS = [[10, 72, 1872, Infinity], [-57, 53, 1885, 1998], [-72,
     group([cyl(0.5, 7, '#8b4a32', cx, H(cx, cz) - 0.3, cz, 10)], from, to);
   }
 }
-// Kratochvílova rozhledna (1935)
+// Kratochvílova rozhledna (1935) – podle dobové fotografie
 {
   const x = -5, z = 40, g = H(x, z) - 0.2;
-  group([box(1.1, 4.2, 1.1, '#cfc7b4', x, g, z), box(2, 0.3, 2, '#9a8f7c', x, g + 4.2, z), cone(1.3, 0.9, '#7a4a35', x, g + 4.5, z, 4, Math.PI / 4)], 1935);
+  const concrete = '#c9c4b8', parts = [];
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2;
+    parts.push(cyl(0.06, 2.6, concrete, x + Math.cos(a) * 0.55, g, z + Math.sin(a) * 0.55, 6));
+  }
+  const helix = [];
+  for (let t = 0; t <= 1; t += 1 / 60) {
+    const a = t * Math.PI * 2 * 3;
+    helix.push(new THREE.Vector3(x + Math.cos(a) * 0.28, g + 0.1 + t * 2.4, z + Math.sin(a) * 0.28));
+  }
+  parts.push(mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(helix), 120, 0.07, 5), concrete, 0, 0, 0));
+  parts.push(cyl(0.68, 0.18, concrete, x, g + 2.6, z, 16), cyl(1.0, 0.1, '#8f8a80', x, g + 3.05, z, 20),
+    cyl(0.08, 0.3, concrete, x, g + 2.78, z, 6));
+  group(parts, 1935);
 }
 // Kaple sv. Vojtěcha na Řípu (pravděpodobně kolem 1039), roku 1126 opravena a rozšířena o západní věž
 {
@@ -1308,7 +1356,7 @@ for (let i = 0; i < 70; i++) {
   scene.add(s);
   smoke.push(s);
 }
-const SMOKE_YEARS = [[1421, 1422.5], [1425, 1426], [1428, 1429], [1634, 1635.5], [1639, 1640.5]];
+const SMOKE_YEARS = [[1421, 1422.5], [1425, 1426], [1428, 1429], [1466, 1467], [1631, 1632], [1634, 1635.5], [1639, 1640.5], [1645, 1646]];
 // Kouř z továrních komínů (do 90. let 20. století)
 const factorySmoke = [];
 for (const [cx, cz, from, to] of FACTORY_CHIMNEYS) {
@@ -1622,6 +1670,9 @@ function showEvent(i) {
   $('ev-year').textContent = ev.label ?? ev.year;
   $('ev-title').textContent = ev.title;
   $('ev-text').textContent = ev.text;
+  const link = $('ev-link');
+  link.hidden = !ev.link;
+  if (ev.link) { link.textContent = `${ev.link[0]} ↗`; link.href = ev.link[1]; }
 }
 
 function updateUI() {

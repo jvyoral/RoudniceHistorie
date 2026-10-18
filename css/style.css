@@ -260,3 +260,6 @@ kbd {
 }
 #real-toggle[hidden], #real-note[hidden], #hist-toggle[hidden], #hist-note[hidden] { display: none; }
 #real-note, #hist-note { font-size: 11px; max-width: 220px; margin-top: 2px; }
+
+#ev-link { display: inline-block; margin-top: 8px; font-size: 13px; color: #9cc7ff; }
+#ev-link[hidden] { display: none; }

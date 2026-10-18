@@ -146,8 +146,8 @@ function treeMeshes(buf, toY) {
     const p = i * 20;
     const x = dv.getFloat32(p, true), z = dv.getFloat32(p + 4, true);
     const g = dv.getFloat32(p + 8, true), h = dv.getFloat32(p + 12, true);
-    const crownH = Math.min(h * 0.6, 12);
-    const r = Math.min(Math.max(h * 0.28, 1.6), 6) / 10;
+    const crownH = Math.min(h * 0.7, 14);
+    const r = Math.min(Math.max(h * 0.33, 2), 7) / 10;
     const yTop = toY(g + h), yBot = toY(g + h - crownH), yG = toY(g);
     o.position.set(x, (yTop + yBot) / 2, z);
     o.rotation.set(0, i, 0);
